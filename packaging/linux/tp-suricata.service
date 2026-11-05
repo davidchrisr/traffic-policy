@@ -1,0 +1,33 @@
+[Unit]
+Description=Traffic Policy Suricata passive protocol metadata capture
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# Suricata parses untrusted traffic. Its own account cannot reach the enforcement service
+# socket or change nftables; the setgid Suricata directory shares its output.
+User=traffic-policy-suricata
+Group=traffic-policy-suricata
+EnvironmentFile=/etc/traffic-policy/suricata.env
+ExecStart=/usr/bin/suricata --af-packet=${TP_SURICATA_INTERFACE} --runmode=single -c /etc/traffic-policy/suricata.yaml -l /var/lib/traffic-policy/suricata
+Restart=on-failure
+RestartSec=3
+UMask=0027
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+ReadWritePaths=/var/lib/traffic-policy/suricata
+MemoryMax=512M
+TasksMax=64
+LimitFSIZE=64M
+
+[Install]
+WantedBy=multi-user.target

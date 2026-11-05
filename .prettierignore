@@ -1,0 +1,7 @@
+node_modules/
+.local/
+.tmp/
+**/.svelte-kit/
+**/build/
+dist/
+tools/oxlint/anti-slop/

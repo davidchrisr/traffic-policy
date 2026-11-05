@@ -1,0 +1,8 @@
+extends: markdownlint/style/prettier
+
+MD024:
+  siblings_only: true
+
+MD033:
+  table_allowed_elements:
+    - br

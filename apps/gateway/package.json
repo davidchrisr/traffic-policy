@@ -1,0 +1,12 @@
+{
+  "name": "@traffic-policy/gateway",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "dependencies": {
+    "@traffic-policy/contracts": "workspace:*",
+    "@traffic-policy/core": "workspace:*",
+    "dns-packet": "5.6.1",
+    "fast-xml-parser": "5.11.2"
+  }
+}

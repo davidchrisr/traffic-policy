@@ -1,0 +1,15 @@
+{
+  "database": "/var/lib/traffic-policy/controller/controller.sqlite3",
+  "listenAddress": "192.0.2.20",
+  "browserPort": 9444,
+  "machinePort": 9445,
+  "browserTransport": "https",
+  "publicOrigin": "https://controller.example.test:9444",
+  "gatewayUrl": "https://gateway.example.test:9443",
+  "gatewayIdentity": "traffic-policy-gateway",
+  "tls": {
+    "ca": "/etc/traffic-policy/tls/ca.crt",
+    "certificate": "/etc/traffic-policy/tls/controller.crt",
+    "key": "/etc/traffic-policy/tls/controller.key"
+  }
+}

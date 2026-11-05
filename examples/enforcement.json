@@ -1,0 +1,14 @@
+{
+  "socketPath": "/run/traffic-policy/enforcement.sock",
+  "stateDirectory": "/var/lib/traffic-policy/enforcement",
+  "groupId": 999,
+  "dnsPort": 5353,
+  "upstreamInterfaces": ["wan0"],
+  "controllerAddresses": ["192.0.2.20"],
+  "machinePort": 9443,
+  "controllerPort": 9445,
+  "upstreamDns": {
+    "address": "192.0.2.53",
+    "port": 53
+  }
+}

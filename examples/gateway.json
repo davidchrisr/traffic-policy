@@ -1,0 +1,19 @@
+{
+  "gatewayId": "bc8c3c4d-7d63-4aa3-a1be-f8288b95f582",
+  "listenAddress": "192.0.2.10",
+  "machinePort": 9443,
+  "controllerUrl": "https://controller.example.test:9445",
+  "controllerIdentity": "traffic-policy-controller",
+  "dnsListenAddresses": ["198.51.100.1"],
+  "dnsPort": 5353,
+  "upstreamDns": { "address": "192.0.2.53", "port": 53 },
+  "enforcementSocket": "/run/traffic-policy/enforcement.sock",
+  "stateDirectory": "/var/lib/traffic-policy/gateway",
+  "collectorBytes": "134217728",
+  "tls": {
+    "ca": "/etc/traffic-policy/tls/ca.crt",
+    "certificate": "/etc/traffic-policy/tls/gateway.crt",
+    "key": "/etc/traffic-policy/tls/gateway.key"
+  },
+  "suricataFile": "/var/lib/traffic-policy/suricata/eve.json"
+}

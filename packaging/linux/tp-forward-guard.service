@@ -1,0 +1,23 @@
+[Unit]
+Description=Traffic Policy forwarding guard
+DefaultDependencies=no
+Wants=network-pre.target
+# Distribution rulesets commonly begin with `flush ruleset`; load after them.
+After=nftables.service
+Before=network-pre.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=3
+Environment=BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+# Disable routing, preserve/install protection, then enable forwarding.
+ExecStart=/opt/traffic-policy/runtime/bin/bun --no-install /opt/traffic-policy/app/forward-guard.mjs
+ProtectSystem=full
+ProtectHome=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+[Install]
+WantedBy=sysinit.target

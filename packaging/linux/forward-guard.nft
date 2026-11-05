@@ -1,0 +1,14 @@
+#!/usr/sbin/nft -f
+# Drops routed traffic from boot until the enforcement service installs the
+# managed policy. The enforcement service removes this table in that same transaction.
+# Input and output are unaffected, so management access to the gateway remains.
+
+add table inet traffic_policy_guard
+delete table inet traffic_policy_guard
+
+table inet traffic_policy_guard {
+  chain forward {
+    type filter hook forward priority -20; policy drop;
+    counter comment "awaiting-policy"
+  }
+}

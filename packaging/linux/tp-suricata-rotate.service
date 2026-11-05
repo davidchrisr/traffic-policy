@@ -1,0 +1,32 @@
+[Unit]
+Description=Close and rotate Traffic Policy Suricata logs
+After=tp-suricata.service
+# Retry a transient failure for about a minute, then report a failed service.
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=exec
+Environment=BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+ExecStart=/opt/traffic-policy/runtime/bin/bun --no-install /opt/traffic-policy/app/suricata-rotate.mjs
+Restart=always
+RestartSec=5
+User=root
+Group=traffic-policy
+NoNewPrivileges=yes
+# Read the unprivileged Suricata's /proc descriptors and hand it the placeholder
+# output; root needs no other privilege here.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_CHOWN
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/traffic-policy/suricata /var/lib/traffic-policy/gateway
+RestrictAddressFamilies=AF_UNIX
+UMask=0027
+MemoryMax=128M
+TasksMax=16
+LogRateLimitIntervalSec=1min
+LogRateLimitBurst=4
+
+[Install]
+WantedBy=multi-user.target

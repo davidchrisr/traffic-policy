@@ -1,0 +1,34 @@
+[Unit]
+Description=Traffic Policy gateway and local DNS authorization
+Requires=tp-enforcement.service
+After=tp-enforcement.service tp-suricata.service network-online.target
+Wants=network-online.target tp-suricata.service tp-suricata-rotate.service
+
+[Service]
+Type=exec
+User=traffic-policy
+Group=traffic-policy
+Environment=BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+LimitNOFILE=16384
+ExecStart=/opt/traffic-policy/runtime/bin/bun --no-install /opt/traffic-policy/app/gateway.mjs /etc/traffic-policy/gateway.json
+Restart=on-failure
+RestartSec=3
+StateDirectory=traffic-policy/gateway
+StateDirectoryMode=0750
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/traffic-policy/gateway /var/lib/traffic-policy/suricata
+UMask=0077
+MemoryMax=768M
+TasksMax=128
+SyslogIdentifier=tp-gateway
+
+[Install]
+WantedBy=multi-user.target

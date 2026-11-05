@@ -1,0 +1,34 @@
+[Unit]
+Description=Traffic Policy SvelteKit controller
+After=network-online.target
+Wants=network-online.target tp-controller-machine.service
+
+[Service]
+Type=exec
+User=traffic-policy
+Group=traffic-policy
+Environment=TP_CONTROLLER_CONFIG=/etc/traffic-policy/controller.json
+Environment=NODE_ENV=production
+Environment=BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+ExecStart=/opt/traffic-policy/runtime/bin/bun --no-install /opt/traffic-policy/app/controller-runtime.mjs /opt/traffic-policy/app/controller/handler.js
+Restart=on-failure
+RestartSec=3
+StateDirectory=traffic-policy/controller
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/traffic-policy/controller
+UMask=0077
+MemoryMax=768M
+TasksMax=128
+SyslogIdentifier=tp-controller
+
+[Install]
+WantedBy=multi-user.target

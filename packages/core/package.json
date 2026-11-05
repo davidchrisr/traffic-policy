@@ -1,0 +1,19 @@
+{
+  "name": "@traffic-policy/core",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "exports": {
+    "./machine-server": "./src/machine-server.server.ts",
+    ".": "./src/index.ts",
+    "./nftables": "./src/nftables.ts",
+    "./io": "./src/io.server.ts",
+    "./storage": "./src/storage.server.ts",
+    "./domains": "./src/domains.ts",
+    "./systemd": "./src/systemd.server.ts"
+  },
+  "dependencies": {
+    "@traffic-policy/contracts": "workspace:*",
+    "ipaddr.js": "2.5.0"
+  }
+}

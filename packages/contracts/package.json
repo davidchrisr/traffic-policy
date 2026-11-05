@@ -1,0 +1,16 @@
+{
+  "name": "@traffic-policy/contracts",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./dashboard": "./src/dashboard.ts",
+    "./enforcement": "./src/enforcement.ts",
+    "./services": "./src/services.ts"
+  },
+  "dependencies": {
+    "zod": "4.6.7",
+    "ipaddr.js": "2.5.0"
+  }
+}

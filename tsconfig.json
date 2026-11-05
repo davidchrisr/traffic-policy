@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "types": ["node"],
+    "lib": ["ES2023", "DOM"],
+    "resolveJsonModule": true
+  },
+  "include": [
+    "packages/**/*.ts",
+    "apps/gateway/**/*.ts",
+    "tools/**/*.ts",
+    "*.ts"
+  ],
+  "exclude": ["tools/oxlint/anti-slop/**", "node_modules", "dist"]
+}

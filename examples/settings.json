@@ -1,0 +1,16 @@
+{
+  "dnsGraceSeconds": 300,
+  "permissionLimit": 4096,
+  "trafficHistoryBytes": "1073741824",
+  "dnsHistoryBytes": "536870912",
+  "blockedHistoryBytes": "1073741824",
+  "otherHistoryBytes": "268435456",
+  "auditBytes": "268435456",
+  "collectorBytes": "134217728",
+  "gatewayDiskBytes": "4294967296",
+  "controllerDiskBytes": "8589934592",
+  "historyMaxAgeDays": null,
+  "auditMaxAgeDays": null,
+  "localNetworks": [],
+  "reverseDnsResolver": null
+}

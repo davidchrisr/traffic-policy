@@ -1,0 +1,54 @@
+{
+  "name": "traffic-policy",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "license": "MIT",
+  "packageManager": "bun@1.4.2",
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "bun --bun run tsc --noEmit && bun --bun run --cwd apps/controller check",
+    "test": "bun --bun run vitest run",
+    "lint": "bun run lint:eslint && bun run lint:anti-slop",
+    "lint:eslint": "bun --bun run eslint apps packages tools '*.{ts,js,jsx,mjs,cjs}'",
+    "lint:anti-slop": "bun --bun run oxlint --report-unused-disable-directives-severity error apps packages tools eslint.config.ts oxlint.config.ts vitest.config.ts",
+    "build": "bun run tools/build.ts",
+    "catalog": "bun --bun run --cwd apps/controller catalog",
+    "lint:markdown": "bun --bun run markdownlint-cli2 '*.md' 'docs/*.md' packages/core/data/README.md",
+    "format": "bun --bun run prettier --plugin prettier-plugin-svelte --write apps packages tools packaging examples .github '*.{ts,json}' README.md SECURITY.md API_CONTRACT.md DESIGN.md 'docs/*.md'",
+    "format:check": "bun --bun run prettier --plugin prettier-plugin-svelte --check apps packages tools packaging examples .github '*.{ts,json}' README.md SECURITY.md API_CONTRACT.md DESIGN.md 'docs/*.md'"
+  },
+  "dependencies": {
+    "zod": "4.6.7",
+    "ipaddr.js": "2.5.0",
+    "dns-packet": "5.6.1",
+    "fast-xml-parser": "5.11.2",
+    "@node-rs/argon2": "2.2.2"
+  },
+  "overrides": {
+    "katex": "0.19.0",
+    "smol-toml": "1.9.1"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.87.0",
+    "oxlint": "1.87.0",
+    "typescript": "6.0.3",
+    "@types/node": "24.19.1",
+    "@types/dns-packet": "5.6.5",
+    "vitest": "5.0.3",
+    "eslint": "10.12.0",
+    "typescript-eslint": "8.71.1",
+    "eslint-plugin-svelte": "3.23.0",
+    "prettier": "3.9.9",
+    "prettier-plugin-svelte": "4.1.1",
+    "markdownlint-cli2": "0.23.3",
+    "esbuild": "0.28.2",
+    "shadcn-svelte": "1.7.0"
+  }
+}

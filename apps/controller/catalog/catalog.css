@@ -1,0 +1,75 @@
+/* Development catalog only. Product tokens and components come from app.css. */
+@import "../src/app.css";
+@source "../src";
+
+.catalog-panel {
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.catalog-monitor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  container-type: inline-size;
+  border: 1px solid var(--border);
+}
+.catalog-row {
+  text-align: left;
+  width: calc(100% - 36px);
+}
+.catalog-row:hover {
+  background: var(--hover);
+}
+.catalog-row[aria-pressed="true"] {
+  background: var(--accent);
+}
+.catalog-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.catalog-nav a {
+  color: var(--ring);
+}
+.catalog-preview [data-variant="default"][data-preview="hover"] {
+  background: var(--primary-hover);
+}
+.catalog-preview [data-variant="default"][data-preview="pressed"] {
+  background: var(--primary-pressed);
+}
+.catalog-preview
+  :is(
+    [data-variant="secondary"],
+    [data-variant="outline"],
+    [data-variant="ghost"]
+  )[data-preview="hover"] {
+  background: var(--hover);
+}
+.catalog-preview
+  :is(
+    [data-variant="secondary"],
+    [data-variant="outline"],
+    [data-variant="ghost"]
+  )[data-preview="pressed"] {
+  background: var(--accent);
+}
+.catalog-preview [data-variant="destructive"][data-preview="hover"],
+.catalog-preview [data-variant="destructive"][data-preview="pressed"] {
+  background: color-mix(in srgb, var(--destructive) 20%, transparent);
+}
+@media (max-width: 900px) {
+  .catalog-monitor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .catalog-monitor > .inspector-pane {
+    display: none;
+  }
+}
+@media (max-width: 700px) {
+  .catalog-row {
+    width: calc(100% - 16px);
+  }
+}
