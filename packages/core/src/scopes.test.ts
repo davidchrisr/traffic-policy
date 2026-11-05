@@ -14,6 +14,7 @@ import {
   ruleMatches,
   scopeTree,
   subjectContext,
+  subjectPath,
 } from "./index.ts";
 import {
   addressLeases,
@@ -176,6 +177,20 @@ describe("subnet instances and address rules", () => {
         ["10.10.0.70", 33],
       ]),
     });
+
+    // Labels name a scope; its place among the containing scopes is shown separately.
+    const { instances } = policy([]);
+
+    expect(
+      subjectPath({ kind: "address", value: "10.10.0.70" }, tree, instances),
+    ).toBe("example-network › build-runner › 10.10.0.70");
+    expect(
+      subjectPath({ kind: "instance", instanceId: runner }, tree, instances),
+    ).toBe("example-network › build-runner");
+    expect(
+      subjectPath({ kind: "instance", instanceId: bridge }, tree, instances),
+    ).toBeNull();
+    expect(subjectPath({ kind: "global" }, tree, instances)).toBeNull();
   });
 
   it("inherits containing scopes' rules and lets a deeper scope win only an otherwise equal tie", () => {

@@ -419,6 +419,36 @@ export function subjectLabel(
   }
 }
 
+// Where a subject sits among the scopes, one line for each of its ranges: the instances and
+// address rules containing it, outermost first, ending with the subject. Null for global
+// subjects, scopes the tree lacks, and scopes nothing contains.
+export function subjectPath(
+  subject: Subject,
+  tree: ScopeTree,
+  instances: Pick<Instance, "id" | "name">[] = [],
+): string | null {
+  const scope = subjectScope(subject);
+
+  if (scope === null) return null;
+  const names = new Map(instances.map((value) => [value.id, value.name]));
+
+  const paths = tree.entries
+    .filter((entry) => entry.scope === scope)
+    .map((entry) => ScopeTree.path(entry))
+    .filter((path) => path.length > 1)
+    .map((path) =>
+      path
+        .map((entry) =>
+          entry.instanceId
+            ? (names.get(entry.instanceId) ?? "Instance")
+            : entry.network,
+        )
+        .join(" › "),
+    );
+
+  return paths.length ? [...new Set(paths)].join("\n") : null;
+}
+
 export function describeRule(rule: Rule, instances: Instance[] = []): string {
   return `${subjectLabel(rule.subject, instances)} · ${directionLabels[rule.direction]} · ${ruleScopeLabel(rule)}`;
 }

@@ -16,6 +16,7 @@ import {
   reachablePaths,
   ruleScopeLabel,
   scopeTree,
+  serviceLabel,
   type ObservedTraffic,
   type TrafficDecision,
 } from "@traffic-policy/core";
@@ -77,10 +78,13 @@ export interface ServiceDecision extends TrafficDecision {
   builtIn: BuiltIn | null;
 }
 
-// A gateway accept and, when it admits only some of a service's packets, which ones.
+// A gateway accept and, when it admits only some of a service's packets, which ones; with the
+// service it admits.
 export interface BuiltIn {
   name: string;
   condition: string | null;
+  direction: Service["direction"];
+  service: string;
 }
 
 // The gateway's fixed accepts a service with the gateway can meet: its DNS gate, DHCP, the machine
@@ -98,18 +102,24 @@ function builtInAccept(
   const udp = service.protocol === 17,
     tcp = service.protocol === 6;
 
+  const admitted = {
+    direction: service.direction,
+    service: serviceLabel(service.protocol, service.port),
+  };
+
   if (
     service.direction === "outgoing" &&
     (udp || tcp) &&
     service.port === endpoint.dnsPort
   )
-    return { name: "DNS gate", condition: null };
+    return { name: "DNS", condition: null, ...admitted };
 
   // The gateway serves DHCP and may itself be a DHCP client, so each port is accepted from its pair
   // in either direction.
   const pair = udp ? DHCP_PAIRS.get(service.port) : undefined;
 
-  if (pair) return { name: "DHCP", condition: `from port ${pair}` };
+  if (pair)
+    return { name: "DHCP", condition: `from port ${pair}`, ...admitted };
 
   // The machine link and the upstream lookups can share a port; their addresses then combine.
   const accepts = [
@@ -118,7 +128,7 @@ function builtInAccept(
       (service.direction === "outgoing"
         ? endpoint.machinePort
         : endpoint.controllerPort)
-      ? [["machine link", endpoint.controllerAddresses] as const]
+      ? [["controller link", endpoint.controllerAddresses] as const]
       : []),
     ...(service.direction === "incoming" &&
     (udp || tcp) &&
@@ -144,6 +154,7 @@ function builtInAccept(
     condition: own?.addresses.every((address) => inside.includes(address))
       ? null
       : `for ${inside.join(", ")}`,
+    ...admitted,
   };
 }
 
@@ -307,18 +318,44 @@ export function stateDescription(
       const text = `${ruled}${exceptions.length ? `, except ${exceptions.join(", ")}` : ""}.`;
 
       return decision.builtIn
-        ? `Allowed ${decision.builtIn.condition} by the gateway's built-in ${decision.builtIn.name} accept. Other traffic: ${text}`
+        ? `${builtInText(decision.builtIn)}, otherwise ${uncapitalize(text)}`
         : text;
     }
 
     case "allow":
     case "block":
       return decision?.builtIn
-        ? `Allowed by the gateway's built-in ${decision.builtIn.name} accept, which no rule can change`
+        ? builtInText(decision.builtIn)
         : decision
           ? withRefusals(capitalize(outcome(decision.winner)), decision)
           : capitalize(state === "allow" ? "allowed" : "blocked");
   }
+}
+
+const builtInText = ({ name, condition }: BuiltIn) =>
+  `Allowed ${condition ? `${condition} ` : ""}by the built-in ${name} rule`;
+
+export interface InspectorBuiltIn {
+  direction: BuiltIn["direction"];
+  label: string;
+}
+
+// The gateway accepts that admit the selection's services before any rule, once each, labelled
+// like rules: the accept, its peer, and the service.
+export function inspectorBuiltIns(
+  decisions: (ServiceDecision | null | undefined)[],
+): InspectorBuiltIn[] {
+  const rows = new Map<string, InspectorBuiltIn>();
+
+  for (const decision of decisions) {
+    if (!decision?.builtIn) continue;
+    const { name, condition, direction, service } = decision.builtIn;
+    const label = `${capitalize(name)} · Gateway · ${service}${condition ? ` · ${condition}` : ""}`;
+
+    rows.set(`${direction}|${label}`, { direction, label });
+  }
+
+  return [...rows.values()];
 }
 
 function withRefusals(text: string, decision?: ServiceDecision | null) {
@@ -329,6 +366,9 @@ function withRefusals(text: string, decision?: ServiceDecision | null) {
 
 const capitalize = (value: string) =>
   `${value[0]!.toUpperCase()}${value.slice(1)}`;
+
+const uncapitalize = (value: string) =>
+  `${value[0]!.toLowerCase()}${value.slice(1)}`;
 
 export const ruleName = (rule: Rule) =>
   isCatchAll(rule) ? "the catch-all" : ruleScopeLabel(rule);

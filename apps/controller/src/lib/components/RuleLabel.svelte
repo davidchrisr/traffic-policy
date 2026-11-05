@@ -14,11 +14,14 @@
     rule,
     dns = null,
     instances = null,
+    path = null,
   }: {
     rule: Rule;
     dns?: string | null;
     // Shows the rule's instance where no heading already names it.
     instances?: Instance[] | null;
+    // Where that instance or address sits among the scopes, shown on hover.
+    path?: string | null;
   } = $props();
 
   const instance = $derived(
@@ -33,7 +36,11 @@
 </script>
 
 <span class="rule-label">
-  {#if instance}<span class="shrink-0">{instance}</span>{/if}
+  {#if instance}<span class="shrink-0" title={path ?? undefined}
+      >{instance}{#if path}<span class="sr-only"
+          >{` (${path.replaceAll("\n", "; ")})`}</span
+        >{/if}</span
+    >{/if}
   <DirectionIcon direction={rule.direction} />
   <span class="min-w-0 break-words"
     >{isCatchAll(rule) ? "Catch-all" : ruleScopeLabel(rule)}</span

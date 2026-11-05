@@ -4,11 +4,11 @@
   import { Pencil, RefreshCw, Search, Trash2 } from "@lucide/svelte";
   import type { PageProps } from "./$types";
   import {
-    dashboardStatusSchema,
     settingsSnapshotSchema,
     instancesSnapshotSchema,
   } from "@traffic-policy/contracts/dashboard";
   import { RefreshRunner } from "#lib/refresh-runner.ts";
+  import { latestStatus, liveStatus } from "#lib/live-status.ts";
   import { api, ApiError, displayBytes } from "#lib/client.ts";
   import { formatByteSize, parseByteSize } from "#lib/byte-size.ts";
   import { instanceSchema, type Instance } from "@traffic-policy/contracts";
@@ -176,15 +176,10 @@
 
   let refreshingResources = $state(false);
 
-  const statusRunner = new RefreshRunner<typeof data.status>({
-    onValue: (status) => {
-      model = { ...model, status };
-    },
-    onError: () => {
-      /* The Gateway indicator expires when status cannot be refreshed. */
-    },
-    onBusy: () => {},
-  });
+  // The layout keeps status current between Settings refreshes.
+  const live = liveStatus();
+
+  const status = $derived(latestStatus(live.current, model.status));
 
   const resourcesRunner = new RefreshRunner<typeof data>({
     onValue: (next) => {
@@ -203,21 +198,8 @@
       now = Date.now();
     }, 1000);
 
-    const statusTimer = setInterval(() => {
-      if (!refreshingResources)
-        void statusRunner.run(
-          async (signal) =>
-            dashboardStatusSchema.parse(
-              await api("status", "GET", undefined, signal),
-            ),
-          false,
-        );
-    }, 5000);
-
     return () => {
       clearInterval(timer);
-      clearInterval(statusTimer);
-      statusRunner.dispose();
       resourcesRunner.dispose();
     };
   });
@@ -280,7 +262,6 @@
 
   function refresh() {
     refreshingResources = true;
-    statusRunner.cancel();
 
     return resourcesRunner.run(async (signal) => {
       const [rawResources, rawInstances] = await Promise.all([
@@ -443,9 +424,9 @@
   <h1 class="page-title">Settings</h1>
   <div class="header-actions">
     <StatusLine
-      pending={model.status.pending}
-      lastError={model.status.lastError as string | null}
-      lastSeen={model.status.lastSeen as string | null}
+      pending={status.pending}
+      lastError={status.lastError as string | null}
+      lastSeen={status.lastSeen as string | null}
     />
     <Button
       variant="ghost"

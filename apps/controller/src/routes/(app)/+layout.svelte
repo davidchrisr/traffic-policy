@@ -8,6 +8,7 @@
   } from "@traffic-policy/contracts/dashboard";
   import { api } from "#lib/client.ts";
   import { RefreshRunner } from "#lib/refresh-runner.ts";
+  import { shareStatus } from "#lib/live-status.ts";
   import PaneResizer from "#lib/components/PaneResizer.svelte";
   import {
     Activity,
@@ -20,12 +21,20 @@
   let { children }: LayoutProps = $props();
 
   let needsReview = $state(0),
+    status = $state.raw<DashboardStatus | null>(null),
     nav = $state<HTMLElement>(),
     navWidth = $state<number>();
 
+  shareStatus({
+    get current() {
+      return status;
+    },
+  });
+
   const runner = new RefreshRunner<DashboardStatus>({
-    onValue: (status) => {
-      needsReview = status.needsReview;
+    onValue: (next) => {
+      status = next;
+      needsReview = next.needsReview;
     },
     // An unknown count is not shown; pages and the status line report the failure.
     onError: () => {

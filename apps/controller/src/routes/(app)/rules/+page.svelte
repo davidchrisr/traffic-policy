@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
+  import { page } from "$app/state";
   import { Plus, Check, Ban, Pencil, RefreshCw, Trash2 } from "@lucide/svelte";
   import type { PageProps } from "./$types";
   import {
@@ -14,6 +15,7 @@
     describeRule,
     isSettingsCatchAll,
     overriddenBy,
+    subjectPath,
   } from "@traffic-policy/core";
   import { api, failureMessage } from "#lib/client.ts";
   import { currentTime } from "#lib/clock.ts";
@@ -86,8 +88,16 @@
     const addresses = tree.entries.filter((entry) => !entry.instanceId);
 
     return [
-      { id: null, name: "Any instance" },
-      ...model.instances,
+      { id: null, name: "Any instance", path: null },
+      ...model.instances.map((instance) => ({
+        id: instance.id,
+        name: instance.name,
+        path: subjectPath(
+          { kind: "instance", instanceId: instance.id },
+          tree,
+          model.instances,
+        ),
+      })),
       ...addresses.map((entry) => {
         const holder = model.instances.find(
           (instance) => instance.id === ScopeTree.instanceOf(entry),
@@ -96,6 +106,11 @@
         return {
           id: entry.network,
           name: holder ? `${entry.network} in ${holder.name}` : entry.network,
+          path: subjectPath(
+            { kind: "address", value: entry.network },
+            tree,
+            model.instances,
+          ),
         };
       }),
     ].flatMap((group) => {
@@ -165,6 +180,21 @@
   }
 
   onMount(() => {
+    // A History entry links here with its rule: open it.
+    const linked = model.rules.find(
+      (rule) => rule.id === page.url.searchParams.get("rule"),
+    );
+
+    if (linked) {
+      select(linked);
+      inspectorOpen = true;
+      void tick().then(() =>
+        document
+          .getElementById(`rule-${linked.id}`)
+          ?.scrollIntoView({ block: "center" }),
+      );
+    }
+
     const timer = setInterval(() => {
       void refresh(false);
     }, 5000);
@@ -317,7 +347,10 @@
       </p>{/if}
     {#each groups as group (group.id)}<section class="mb-5">
         <h2 class="section-title mb-2">
-          {group.name}<span
+          <span title={group.path ?? undefined}>{group.name}</span
+          >{#if group.path}<span class="sr-only"
+              >{` (${group.path.replaceAll("\n", "; ")})`}</span
+            >{/if}<span
             class="muted ml-2 text-xs font-normal"
             aria-hidden="true">{group.rules.length}</span
           ><span class="sr-only"
@@ -327,6 +360,7 @@
         {#each group.rules as rule (rule.id)}{@const fromSettings =
             isSettingsCatchAll(rule)}{@const override = overrides.get(rule.id)}
           <div
+            id={`rule-${rule.id}`}
             class="list-row"
             data-selected={selected === rule.id}
             data-inactive={rule.state !== "active" || override !== undefined}

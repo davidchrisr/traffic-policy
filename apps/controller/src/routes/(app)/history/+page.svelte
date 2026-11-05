@@ -16,6 +16,7 @@
     historySnapshotSchema,
     type HistorySnapshot,
   } from "@traffic-policy/contracts/dashboard";
+  import { latestStatus, liveStatus } from "#lib/live-status.ts";
   import { RefreshRunner } from "#lib/refresh-runner.ts";
   import { api } from "#lib/client.ts";
   import RuleLabel from "#lib/components/RuleLabel.svelte";
@@ -84,6 +85,11 @@
   }
 
   onMount(() => () => runner.dispose());
+
+  // History is loaded once; the layout keeps its status current.
+  const live = liveStatus();
+
+  const status = $derived(latestStatus(live.current, model.status));
 </script>
 
 <svelte:head><title>History · Traffic Policy</title></svelte:head>
@@ -91,9 +97,9 @@
   <h1 class="page-title">History</h1>
   <div class="header-actions">
     <StatusLine
-      pending={model.status.pending}
-      lastError={model.status.lastError as string | null}
-      lastSeen={model.status.lastSeen as string | null}
+      pending={status.pending}
+      lastError={status.lastError as string | null}
+      lastSeen={status.lastSeen as string | null}
     />
     <Button
       variant="ghost"
@@ -135,10 +141,17 @@
         <div class="min-w-0">
           <p>{sentence(item.action)}</p>
           <p class="muted break-words text-xs">
-            {item.actor}{#if item.client}{` (${[item.client.browser, item.client.address].filter(Boolean).join(", ")})`}{/if}{#if item.subjectRule}{separator}<RuleLabel
-                rule={item.subjectRule}
-                instances={model.instances}
-              />{:else if (item.subjectLabel ?? item.subject) !== item.actor}{separator}{item.subjectLabel ??
+            {item.actor}{#if item.client}{` (${[item.client.browser, item.client.address].filter(Boolean).join(", ")})`}{/if}{#if item.subjectRule}{separator}{#if model.rules.some((rule) => rule.id === item.subjectRule?.id)}<a
+                  class="link-subtle"
+                  href={`/rules?rule=${item.subjectRule.id}`}
+                  ><RuleLabel
+                    rule={item.subjectRule}
+                    instances={model.instances}
+                  /></a
+                >{:else}<RuleLabel
+                  rule={item.subjectRule}
+                  instances={model.instances}
+                />{/if}{:else if (item.subjectLabel ?? item.subject) !== item.actor}{separator}{item.subjectLabel ??
                 item.subject}{/if}
           </p>
           {#if item.changes.length || item.revisions || item.subjectLabel}<details

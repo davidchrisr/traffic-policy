@@ -16,15 +16,19 @@
     groupNames,
   } from "#lib/monitor-groups.ts";
   import {
+    isCatchAll,
     isSettingsCatchAll,
     ruleState,
     scopeKey,
     serviceLabel,
+    subjectPath,
   } from "@traffic-policy/core";
   import {
     combineStates,
     decideService,
+    inspectorBuiltIns,
     inspectorRules,
+    policyTree,
     reviewKeys,
     ruleTitle,
     stateDescription,
@@ -362,6 +366,8 @@
   });
 
   const ruleRows = $derived(inspectorRules(selectionDecisions));
+
+  const builtIns = $derived(inspectorBuiltIns(selectionDecisions));
 
   const summaryEvents = $derived(model.eventSummary?.events ?? []);
 
@@ -917,7 +923,28 @@
         >
           Rules
         </h3>
+        {#each builtIns as row (`${row.direction}|${row.label}`)}
+          <div class="list-row inspector-rule">
+            <RuleDecision
+              state="allow"
+              scope={row.label}
+              description="Allows this traffic"
+              onallow={() => {}}
+              onblock={() => {}}
+              locked="Built into the gateway"
+            />
+            <span class="rule-label min-w-0"
+              ><DirectionIcon direction={row.direction} /><span
+                class="min-w-0 break-words">{row.label}</span
+              ></span
+            >
+          </div>
+        {/each}
         {#each ruleRows as row (row.rule.id)}
+          {@const own =
+            isCatchAll(row.rule) ||
+            (row.rule.subject.kind === "instance" &&
+              row.rule.subject.instanceId === selectedInstance)}
           <div class="list-row inspector-rule" data-dim={row.note !== null}>
             <RuleDecision
               state={ruleState(row.rule) === "active" ? row.rule.action : null}
@@ -931,14 +958,23 @@
                 : null}
             />
             <span class="min-w-0" title={row.note ?? undefined}
-              ><RuleLabel rule={row.rule} dns={row.dns} />{#if row.note}<span
-                  class="sr-only">{row.note}</span
-                >{/if}</span
+              ><RuleLabel
+                rule={row.rule}
+                dns={row.dns}
+                instances={own ? null : model.instances}
+                path={own
+                  ? null
+                  : subjectPath(
+                      row.rule.subject,
+                      policyTree(model.instances, model.rules),
+                      model.instances,
+                    )}
+              />{#if row.note}<span class="sr-only">{row.note}</span>{/if}</span
             >
           </div>
-        {:else}<p class="muted text-xs">
-            No measured traffic in this period to evaluate.
-          </p>{/each}
+        {:else}{#if !builtIns.length}<p class="muted text-xs">
+              No measured traffic in this period to evaluate.
+            </p>{/if}{/each}
         <a class="link-subtle mt-2 inline-block text-xs" href="/rules"
           >All rules</a
         >

@@ -3,6 +3,7 @@ import { ruleSchema, type Rule } from "@traffic-policy/contracts";
 import {
   combineStates,
   decideService,
+  inspectorBuiltIns,
   inspectorRules,
   reviewKey,
   stateDescription,
@@ -324,7 +325,7 @@ describe("Monitor rule state", () => {
 
     expect(lookup?.state).toBe("allow");
     expect(stateDescription("allow", lookup)).toBe(
-      "Allowed by the gateway's built-in DNS gate accept, which no rule can change",
+      "Allowed by the built-in DNS rule",
     );
 
     // DHCP is accepted only from the protocol's port, which Monitor does not record.
@@ -332,8 +333,18 @@ describe("Monitor rule state", () => {
 
     expect(dhcp?.state).toBe("varies");
     expect(stateDescription("varies", dhcp)).toBe(
-      "Allowed from port 68 by the gateway's built-in DHCP accept. Other traffic: Blocked by the catch-all.",
+      "Allowed from port 68 by the built-in DHCP rule, otherwise blocked by the catch-all.",
     );
+
+    // No rule decides the lookup, so the inspector names the accept instead, once for each accept.
+    expect(inspectorRules([lookup])).toEqual([]);
+    expect(inspectorBuiltIns([lookup, lookup, dhcp])).toEqual([
+      { direction: "outgoing", label: "DNS · Gateway · UDP:5353" },
+      {
+        direction: "outgoing",
+        label: "DHCP · Gateway · UDP:67 · from port 68",
+      },
+    ]);
     expect(
       decide([rule(), rule({ action: "allow", protocol: 17 })], {
         ...toGateway,
@@ -342,7 +353,7 @@ describe("Monitor rule state", () => {
       })?.builtIn,
     ).toBeNull();
 
-    // The machine link is accepted for the controller's addresses only.
+    // The controller link is accepted for the controller's addresses only.
     const management = (addresses: string[]) =>
       decideService(
         [rule()],
@@ -356,7 +367,7 @@ describe("Monitor rule state", () => {
       );
 
     expect(stateDescription("varies", management(["10.22.240.0/24"]))).toBe(
-      "Allowed for 10.22.240.20 by the gateway's built-in machine link accept. Other traffic: Blocked by the catch-all.",
+      "Allowed for 10.22.240.20 by the built-in controller link rule, otherwise blocked by the catch-all.",
     );
     expect(management(["10.22.240.20"])?.state).toBe("allow");
     expect(management(["10.22.241.10"])?.state).toBe("block");
@@ -373,7 +384,7 @@ describe("Monitor rule state", () => {
           protocol: 17,
           port,
         })?.builtIn,
-      ).toEqual({ name: "DHCP", condition: `from port ${from}` });
+      ).toMatchObject({ name: "DHCP", condition: `from port ${from}` });
 
     // With the controller's port shared with the upstream resolver's, the resolver's lookups are
     // still accepted.
