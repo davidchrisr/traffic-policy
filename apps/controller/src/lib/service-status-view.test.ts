@@ -53,12 +53,11 @@ function snapshot(
 const applied = { pending: false, lastError: null, stale: false };
 
 describe("header status", () => {
-  it("groups rules, the gateway link, the gateway with its enforcement service, and Suricata with its log rotation", () => {
+  it("groups rules, the gateway with its link and enforcement service, and Suricata with its log rotation", () => {
     const items = statusItems(applied, snapshot(), false, false);
 
     expect(items.map((item) => [item.id, item.tone, item.problems])).toEqual([
       ["rules", "allow", []],
-      ["link", "allow", []],
       ["gateway", "allow", []],
       ["suricata", "allow", []],
     ]);
@@ -78,7 +77,7 @@ describe("header status", () => {
     [{ activeState: "inactive" }, "Log rotation: Stopped", "pending"],
     [{ activeState: "activating" }, "Log rotation: Starting", "pending"],
   ])("lists the failing part of Suricata for %o", (state, problem, tone) => {
-    const suricata = statusItems(applied, snapshot(state), false, false)[3]!;
+    const suricata = statusItems(applied, snapshot(state), false, false)[2]!;
 
     expect(suricata).toMatchObject({ problems: [problem], tone });
   });
@@ -95,13 +94,16 @@ describe("header status", () => {
       statusItems(applied, unread, false, false).map((item) => item.problems),
     ).toEqual([
       [],
-      [],
       ["Gateway service status is unavailable."],
       ["Gateway service status is unavailable."],
     ]);
-    expect(statusItems(applied, snapshot(), true, false)[2]!.problems).toEqual([
+    expect(statusItems(applied, snapshot(), true, false)[1]!.problems).toEqual([
+      "Link process: Out of date",
       "Gateway service: Out of date",
       "Enforcement service: Out of date",
+    ]);
+    expect(statusItems(applied, null, false, true)[1]!.problems).toEqual([
+      "Service status could not be refreshed.",
     ]);
     expect(
       statusItems(
@@ -114,29 +116,28 @@ describe("header status", () => {
       ["destructive", ["Rule changes: Not confirmed"]],
       ["muted", []],
       ["muted", []],
-      ["muted", []],
     ]);
   });
   it("counts a running link process only while the gateway is in contact", () => {
-    const link = (
+    const gateway = (
       sync: typeof applied,
       state: Partial<Omit<ServiceState, "id">> = {},
     ) => statusItems(sync, snapshot({}, state), false, false)[1]!;
 
-    expect(link({ ...applied, stale: true })).toMatchObject({
+    expect(gateway({ ...applied, stale: true })).toMatchObject({
       tone: "pending",
       problems: ["Gateway contact: No contact in 15 seconds"],
     });
     expect(
-      link(
+      gateway(
         { ...applied, stale: true },
         { activeState: "failed", exitStatus: 1 },
       ),
     ).toMatchObject({
       tone: "destructive",
       problems: [
-        "Link process: Failed · exit 1",
         "Gateway contact: No contact in 15 seconds",
+        "Link process: Failed · exit 1",
       ],
     });
   });

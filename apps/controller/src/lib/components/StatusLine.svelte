@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    Cable,
     CircleAlert,
     CircleCheck,
     ListChecks,
@@ -98,12 +97,11 @@
   const summary = $derived(
     attention.length
       ? attention.flatMap((item) => item.problems).join(". ")
-      : "Rules applied. Gateway link connected. Gateway and Suricata running.",
+      : "Rules applied. Gateway and Suricata running.",
   );
 
   const icons = {
     rules: ListChecks,
-    link: Cable,
     gateway: Router,
     suricata: Radar,
   } satisfies Record<StatusItemId, typeof Router>;

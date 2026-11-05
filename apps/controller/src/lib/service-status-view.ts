@@ -6,7 +6,7 @@ import type {
 
 export type StatusTone = "allow" | "pending" | "destructive" | "muted";
 
-export type StatusItemId = "rules" | "link" | "gateway" | "suricata";
+export type StatusItemId = "rules" | "gateway" | "suricata";
 
 export interface StatusItem {
   id: StatusItemId;
@@ -106,16 +106,21 @@ function item(
     id,
     label,
     tone: worstTone(parts.map((part) => part.tone)),
-    problems: parts.flatMap((part) =>
-      part.tone === "pending" || part.tone === "destructive"
-        ? [part.label ? `${part.label}: ${part.state}` : part.state]
-        : [],
-    ),
+    // A notice for a whole host can come from both hosts an item covers; it is listed once.
+    problems: [
+      ...new Set(
+        parts.flatMap((part) =>
+          part.tone === "pending" || part.tone === "destructive"
+            ? [part.label ? `${part.label}: ${part.state}` : part.state]
+            : [],
+        ),
+      ),
+    ],
     description,
   };
 }
 
-// Rule application, the controller's gateway link, the gateway with its enforcement service, and
+// Rule application, the gateway with the controller's link to it and its enforcement service, and
 // Suricata with its output maintenance. A missing or stale services read marks every service it
 // covers instead of hiding it.
 export function statusItems(
@@ -171,24 +176,19 @@ export function statusItems(
     ),
     // A running link process counts only while the gateway answered it within 15 seconds.
     item(
-      "link",
-      "Gateway link",
-      "The controller process that sends rule changes to the gateway and receives its traffic records.",
+      "gateway",
+      "Gateway",
+      "Receives the policy from the controller's link process, answers DNS for managed clients, and collects traffic. The enforcement service applies rules in nftables.",
       [
-        ...parts("controller", ["machine"]),
         {
           label: "Gateway contact",
           ...(sync.stale
             ? { state: "No contact in 15 seconds", tone: "pending" as const }
             : { state: "Connected", tone: "allow" as const }),
         },
+        ...parts("controller", ["machine"]),
+        ...parts("gateway", ["gateway", "enforcement"]),
       ],
-    ),
-    item(
-      "gateway",
-      "Gateway",
-      "Receives the policy, answers DNS for managed clients, and collects traffic. The enforcement service applies rules in nftables.",
-      parts("gateway", ["gateway", "enforcement"]),
     ),
     item(
       "suricata",

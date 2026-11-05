@@ -209,8 +209,9 @@ to the gateway over mTLS; no hand-authored enforcement checkpoint is needed.
 
 The two controller units run independently: restarting or stopping
 `tp-controller.service` leaves the gateway link running, and a failed gateway
-link leaves the dashboard up and shows Gateway link in its status. Each unit has
-its own `MemoryMax=768M`, so the controller may use up to 1.5 GiB.
+link leaves the dashboard up and shows the link process under Gateway in its
+status. Each unit has its own `MemoryMax=768M`, so the controller may use up to
+1.5 GiB.
 
 Check `systemctl status` and `journalctl` for each role. Sign in at the
 configured browser origin, check gateway and service status, then add a test
