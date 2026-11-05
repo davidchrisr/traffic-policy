@@ -147,7 +147,7 @@
               <summary
                 >{item.changes.length ? "What changed" : "Details"}</summary
               >
-              {#each describeChanges(item.changes, model.instances, model.rules) as change, index (index)}<div
+              {#each describeChanges(item.changes, model.instances, item.subjectRule ? [item.subjectRule, ...model.rules] : model.rules) as change, index (index)}<div
                   class="audit-change"
                 >
                   <p class="text-foreground">{change.title}</p>

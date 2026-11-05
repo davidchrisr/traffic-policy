@@ -1534,7 +1534,7 @@ describe("controller contracts and persistence", () => {
       store.close();
     }
   });
-  it("resolves audit labels from the current policy and describes deleted rules from recorded changes", async () => {
+  it("labels audit instances by current name and shows each rule as it was after each entry", async () => {
     const store = await database();
 
     try {
@@ -1595,15 +1595,19 @@ describe("controller contracts and persistence", () => {
           .filter((item) => item.subject === instanceId)
           .every((item) => item.subjectLabel === "Current name"),
       ).toBe(true);
-      expect(
-        rows
-          .filter((item) => item.subject === ruleId)
-          .every(
-            (item) =>
-              item.subjectLabel?.includes("Current name") &&
-              item.subjectLabel.includes("8443"),
-          ),
-      ).toBe(true);
+
+      const ruleLabels = () =>
+        Object.fromEntries(
+          store
+            .history()
+            .audit.filter((item) => item.subject === ruleId)
+            .map((item) => [item.action, item.subjectLabel]),
+        );
+
+      expect(ruleLabels()).toEqual({
+        "rule-updated": "Current name · Both directions · Any peer · TCP:8443",
+        "rule-created": "Current name · Both directions · Any peer · TCP:443",
+      });
       expect(
         rows.find((item) => item.action === "instance-updated")?.changes,
       ).toEqual([
@@ -1614,31 +1618,40 @@ describe("controller contracts and persistence", () => {
           after: { name: "Current name" },
         },
       ]);
-      store.mutation("5", "rule-deleted", ruleId, (policy) => ({
+
+      // The clock steps back between the last two saves.
+      const now = Date.now();
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(now + 60_000);
+      store.mutation("5", "rule-updated", ruleId, (policy) => ({
+        ...policy,
+        rules: policy.rules.map((rule) =>
+          rule.id === ruleId
+            ? { ...rule, portStart: 9443, portEnd: 9443 }
+            : rule,
+        ),
+      }));
+      vi.setSystemTime(now + 59_000);
+      store.mutation("6", "rule-deleted", ruleId, (policy) => ({
         ...policy,
         rules: policy.rules.filter((rule) => rule.id !== ruleId),
       }));
 
-      // The values recorded at deletion describe every entry about the deleted rule.
-      expect(
-        Object.fromEntries(
-          store
-            .history()
-            .audit.filter((item) => item.subject === ruleId)
-            .map((item) => [item.action, item.subjectLabel]),
-        ),
-      ).toEqual({
-        "rule-deleted": expect.stringContaining("8443"),
-        "rule-updated": expect.stringContaining("8443"),
-        "rule-created": expect.stringContaining("8443"),
-      });
+      // A deleted rule's recorded values describe its deletion; older entries undo each change.
       expect(
         store
           .history()
           .audit.filter((item) => item.subject === ruleId)
-          .every((item) => item.subjectRule?.portStart === 8443),
-      ).toBe(true);
+          .map((item) => [item.action, item.subjectRule?.portStart]),
+      ).toEqual([
+        ["rule-updated", 9443],
+        ["rule-deleted", 9443],
+        ["rule-updated", 8443],
+        ["rule-created", 443],
+      ]);
     } finally {
+      vi.useRealTimers();
       store.close();
     }
   });

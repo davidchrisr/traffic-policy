@@ -269,14 +269,9 @@ export class DashboardReads {
     });
   }
   history(limit: number, policy: DashboardPolicy, status: DashboardStatus) {
-    const labels = new Map([
-      ...policy.instances.map(
-        (instance) => [instance.id, instance.name] as const,
-      ),
-      ...policy.rules.map(
-        (rule) => [rule.id, describeRule(rule, policy.instances)] as const,
-      ),
-    ]);
+    const names = new Map(
+      policy.instances.map((instance) => [instance.id, instance.name]),
+    );
 
     const rows = this.database
       .prepare("SELECT * FROM audit ORDER BY at DESC LIMIT ?")
@@ -295,30 +290,57 @@ export class DashboardReads {
       details: auditDetails(String(row.details)),
     }));
 
-    // A deleted rule is no longer in the policy. The complete values recorded when it was
-    // created or deleted describe it, the newest first, for every loaded entry about it.
-    const recorded = new Map<string, Rule>();
+    // Each entry shows its rule as it was right after the entry. From the newest entry back, each
+    // rule starts as it is now and every change is undone in turn: a deletion brings back the
+    // recorded rule, an update restores the fields it changed, and a creation removes the rule.
+    // Entries are loaded newest first, so every change newer than a loaded entry is loaded too.
+    // Changes are undone by revision, since timestamps can tie or step back.
+    const known = new Map(policy.rules.map((rule) => [rule.id, rule]));
+    const asOf = new Map<string, Rule>();
 
-    for (const { details } of entries)
-      for (const change of details.changes) {
-        const whole = ruleSchema.safeParse(
-          change.subject === "rule" && (!change.before || !change.after)
-            ? (change.before ?? change.after)
-            : null,
-        );
+    const changed = entries
+      .filter(({ details }) => details.revisions)
+      .map((entry) => ({
+        ...entry,
+        revision: BigInt(entry.details.revisions!.after),
+      }))
+      .sort((a, b) =>
+        a.revision < b.revision ? 1 : a.revision > b.revision ? -1 : 0,
+      );
 
-        if (whole.success && !recorded.has(whole.data.id))
-          recorded.set(whole.data.id, whole.data);
+    for (const { row, details } of changed) {
+      const changes = details.changes.filter(
+        (change) => change.subject === "rule" && change.id,
+      );
+
+      const deletion = changes.find(
+        (change) => change.id === row.subject && !change.after,
+      );
+
+      const rule = deletion
+        ? ruleSchema.safeParse(deletion.before).data
+        : known.get(String(row.subject));
+
+      if (rule) asOf.set(String(row.id), rule);
+
+      for (const { id, before, after } of changes) {
+        const previous = known.get(id!);
+
+        const restored = !before
+          ? undefined
+          : ruleSchema.safeParse(after ? { ...previous, ...before } : before)
+              .data;
+
+        if (restored) known.set(id!, restored);
+        else known.delete(id!);
       }
+    }
 
     return parseDashboard(historySnapshotSchema, {
       audit: entries.map(({ row, details }) => {
         const subject = String(row.subject);
 
-        const rule =
-          policy.rules.find((value) => value.id === subject) ??
-          recorded.get(subject) ??
-          null;
+        const rule = asOf.get(String(row.id)) ?? null;
 
         return {
           id: String(row.id),
@@ -327,9 +349,9 @@ export class DashboardReads {
           action: String(row.action),
           subject,
           details: String(row.details),
-          subjectLabel:
-            labels.get(subject) ??
-            (rule ? describeRule(rule, policy.instances) : null),
+          subjectLabel: rule
+            ? describeRule(rule, policy.instances)
+            : (names.get(subject) ?? null),
           subjectRule: rule,
           client: auditClient(String(row.details)),
           ...details,
