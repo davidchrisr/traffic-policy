@@ -131,6 +131,32 @@ export function recentValues(
   );
 }
 
+// Merges values into a recent list by time, keeping each value's latest, so an event that arrives
+// late cannot displace newer ones.
+export function latestValues(
+  stored: SQLOutputValue | undefined,
+  entries: { value: string; at: string }[],
+): string {
+  const latest = new Map<string, string>();
+
+  for (const { value, at } of [...readRecent(stored), ...entries]) {
+    const seen = latest.get(value);
+
+    if (seen === undefined || at > seen) latest.set(value, at);
+  }
+
+  return JSON.stringify(
+    [...latest]
+      .map(([value, at]) => ({ value, at }))
+      .sort((a, b) => (a.at < b.at ? 1 : -1))
+      .slice(0, RECENT_CLIENTS),
+  );
+}
+
+// A new host Request takes the lookups Suricata saw from the host from this long before its first
+// drop: they arrive first, since Suricata sees a packet before it is dropped.
+const HOST_LOOKUP_LEAD_MS = 60_000;
+
 const REQUEST_ROW_BYTES = 512n;
 
 const BLOCKED_COUNT_ROW_BYTES = 256;
@@ -292,6 +318,7 @@ export class ControllerStore {
       CREATE TABLE IF NOT EXISTS dns_answers (event_id TEXT NOT NULL, instance_id TEXT NOT NULL, address TEXT NOT NULL, at TEXT NOT NULL, UNIQUE(event_id,address));
       CREATE INDEX IF NOT EXISTS dns_answer_lookup ON dns_answers(instance_id,address,at);
       CREATE INDEX IF NOT EXISTS event_metadata_peer_time ON events(instance_id,peer_ip,at) WHERE type='metadata';
+      CREATE INDEX IF NOT EXISTS event_host_lookup_time ON events(json_extract(details,'$.details.clientIp'),at) WHERE type='dns' AND source='suricata' AND instance_id IS NULL;
       CREATE TABLE IF NOT EXISTS gateway_resources (id INTEGER PRIMARY KEY CHECK(id=1),at TEXT NOT NULL,details TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gateway_endpoint (id INTEGER PRIMARY KEY CHECK(id=1),details TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS storage_usage (name TEXT PRIMARY KEY,bytes INTEGER NOT NULL);
@@ -1061,30 +1088,63 @@ export class ControllerStore {
         ) {
           const old = this.database
             .prepare(
-              "SELECT attempts,first_at,destinations,names FROM host_requests WHERE client_ip=?",
+              "SELECT attempts,first_at,last_at,destinations,names FROM host_requests WHERE client_ip=?",
             )
             .get(client.data);
 
           const blocked = event.type === "blocked";
 
+          // The Request starts at its first drop, which can arrive after later ones.
+          const firstDrop = blocked && (!old || at < String(old.first_at));
+          const first = firstDrop || !old ? at : String(old.first_at);
+
+          // A new first drop takes the lookups that may have arrived before the Request: stored ones
+          // from the lead before the drop on, including any seen after the drop but sent first.
+          const names =
+            event.type === "dns" && event.question
+              ? [{ value: event.question, at }]
+              : firstDrop
+                ? this.database
+                    .prepare(
+                      "SELECT question,MAX(at) AS latest FROM events WHERE type='dns' AND source='suricata' AND instance_id IS NULL AND json_extract(details,'$.details.clientIp')=? AND at>=? AND question!='' AND json_extract(details,'$.details.unregistered')='client' GROUP BY question ORDER BY latest DESC LIMIT ?",
+                    )
+                    .all(
+                      client.data,
+                      new Date(
+                        Date.parse(at) - HOST_LOOKUP_LEAD_MS,
+                      ).toISOString(),
+                      RECENT_CLIENTS,
+                    )
+                    .map((row) => ({
+                      value: String(row.question),
+                      at: String(row.latest),
+                    }))
+                : [];
+
+          const last = [
+            at,
+            ...names.map((name) => name.at),
+            String(old?.last_at ?? at),
+          ].reduce((a, b) => (a > b ? a : b));
+
           if (blocked || old)
             this.database
               .prepare(
-                "INSERT INTO host_requests(client_ip,attempts,first_at,last_at,destinations,names) VALUES(?,?,?,?,?,?) ON CONFLICT(client_ip) DO UPDATE SET attempts=excluded.attempts,last_at=excluded.last_at,destinations=excluded.destinations,names=excluded.names",
+                "INSERT INTO host_requests(client_ip,attempts,first_at,last_at,destinations,names) VALUES(?,?,?,?,?,?) ON CONFLICT(client_ip) DO UPDATE SET attempts=excluded.attempts,first_at=excluded.first_at,last_at=excluded.last_at,destinations=excluded.destinations,names=excluded.names",
               )
               .run(
                 client.data,
                 (
                   BigInt(String(old?.attempts ?? "0")) + (blocked ? 1n : 0n)
                 ).toString(),
-                old?.first_at ?? at,
-                at,
+                first,
+                last,
                 blocked && event.peerIp
-                  ? recentValues(old?.destinations, event.peerIp, at)
+                  ? latestValues(old?.destinations, [
+                      { value: event.peerIp, at },
+                    ])
                   : String(old?.destinations ?? "[]"),
-                event.type === "dns" && event.question
-                  ? recentValues(old?.names, event.question, at)
-                  : String(old?.names ?? "[]"),
+                latestValues(old?.names, names),
               );
         }
 

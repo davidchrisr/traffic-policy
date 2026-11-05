@@ -2448,27 +2448,52 @@ describe("subnet instances and unregistered hosts", () => {
   it("asks to register unregistered hosts seen on client networks, and resolves them on registration", async () => {
     const store = await subnetStore();
 
+    const start = Date.now() - 120_000;
+
+    const at = (seconds: number) =>
+      new Date(start + seconds * 1000).toISOString();
+
+    const lookup = (
+      clientIp: string,
+      question: string,
+      seconds: number,
+    ): GatewayEvent => ({
+      ...retentionEvent(),
+      observedAt: at(seconds),
+      source: "suricata",
+      question,
+      details: { clientIp, unregistered: "client" },
+    });
+
+    const drop = (seconds: number, peerIp?: string): GatewayEvent => ({
+      ...dropped("10.20.0.5", "client", peerIp),
+      observedAt: at(seconds),
+    });
+
     try {
+      // Suricata's lookups arrive before the drops: those from a minute before the first drop on
+      // name its Request, even one seen after the drop. Lookups without a drop ask for nothing.
       store.ingest(
         batch([
-          dropped("10.20.0.5", "client"),
-          dropped("10.20.0.5", "client", "93.184.216.35"),
-          {
-            ...retentionEvent(),
-            source: "suricata",
-            question: "wanted.example",
-            details: { clientIp: "10.20.0.5", unregistered: "client" },
-          },
-          // Upstream drops, drops from covered or link-local addresses, and lookups without a
-          // drop ask for nothing.
+          lookup("10.20.0.5", "stale.example", -66),
+          lookup("10.20.0.5", "edge.example", -61),
+          lookup("10.20.0.5", "early.example", -1),
+          lookup("10.20.0.5", "after.example", 1),
+          lookup("203.0.113.9", "dns.example", 0),
+        ]),
+      );
+      store.ingest(
+        batch([
+          drop(0),
+          drop(2, "93.184.216.35"),
+          lookup("10.20.0.5", "wanted.example", 3),
+          // A late, older drop widens the minute before the first drop; it and a late lookup move
+          // no newer time.
+          drop(-5, "93.184.216.35"),
+          lookup("10.20.0.5", "wanted.example", -2),
+          // Upstream drops and drops from covered or link-local addresses ask for nothing.
           dropped("198.51.100.7", "upstream"),
           dropped("fe80::1234", "client"),
-          {
-            ...retentionEvent(),
-            source: "suricata",
-            question: "dns.example",
-            details: { clientIp: "203.0.113.9", unregistered: "client" },
-          },
           dropped("10.10.0.9", "client"),
         ]),
       );
@@ -2477,12 +2502,19 @@ describe("subnet instances and unregistered hosts", () => {
         {
           kind: "host",
           clientIp: "10.20.0.5",
-          attempts: "2",
+          attempts: "3",
+          firstAt: at(-5),
+          lastAt: at(3),
           destinations: [
-            { address: "93.184.216.35" },
-            { address: "93.184.216.34" },
+            { address: "93.184.216.35", at: at(2) },
+            { address: "93.184.216.34", at: at(0) },
           ],
-          names: [{ name: "wanted.example" }],
+          names: [
+            { name: "wanted.example", at: at(3) },
+            { name: "after.example", at: at(1) },
+            { name: "early.example", at: at(-1) },
+            { name: "edge.example", at: at(-61) },
+          ],
         },
       ]);
       expect(store.status().needsReview).toBe(1);

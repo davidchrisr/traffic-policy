@@ -626,10 +626,13 @@ during the install withholds the answer.
 An unregistered drop that arrived on a client interface creates a host Request
 for the dropping address, with its eight most recent destinations; DNS queries
 Suricata saw from it, which arrive before its packets are dropped, add up to
-eight names. Each client's name is kept once per 60 seconds within the denial
-limits. Registering an address that covers the host resolves the Request, and
-its later denials become ordinary Requests. Upstream drops create no Request;
-Monitor shows their counts and newest samples beside client-side ones.
+eight names. A new Request takes the stored queries from the minute before its
+first drop on, so its first names can be missing only when history retention has
+already removed them; queries alone create no Request. Each client's name is
+kept once per 60 seconds within the denial limits. Registering an address that
+covers the host resolves the Request, and its later denials become ordinary
+Requests. Upstream drops create no Request; Monitor shows their counts and
+newest samples beside client-side ones.
 
 The controller retains pending requests in separate pools: 5,000 connection
 scopes, 5,000 DNS scopes, at most 500 of them per instance, and 1,000 host
