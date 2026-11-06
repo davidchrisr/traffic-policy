@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import { page } from "$app/state";
   import { Ban, RefreshCw } from "@lucide/svelte";
   import type { PageProps } from "./$types";
   import {
@@ -24,7 +25,11 @@
     serviceLabel,
     subjectContext,
   } from "@traffic-policy/core";
-  import { instanceSchema, type Rule } from "@traffic-policy/contracts";
+  import {
+    instanceSchema,
+    ipSchema,
+    type Rule,
+  } from "@traffic-policy/contracts";
   import * as Dialog from "#lib/components/ui/dialog/index.ts";
   import { Input } from "#lib/components/ui/input/index.ts";
   import { Label } from "#lib/components/ui/label/index.ts";
@@ -192,15 +197,63 @@
     },
   });
 
+  // The host a Monitor link names, which every refresh keeps loading.
+  const host = $derived(
+    ipSchema.nullable().parse(page.url.searchParams.get("host")),
+  );
+
+  const missingHost = $derived(
+    host !== null &&
+      !model.requests.some(
+        (request) => request.kind === "host" && request.clientIp === host,
+      )
+      ? host
+      : null,
+  );
+
   function refresh(supersede = true) {
     return runner.run(
       async (signal) =>
         requestsSnapshotSchema.parse(
-          await api("requests", "GET", undefined, signal),
+          await api(
+            host === null
+              ? "requests"
+              : `requests?host=${encodeURIComponent(host)}`,
+            "GET",
+            undefined,
+            signal,
+          ),
         ),
       supersede,
     );
   }
+
+  // Each load, including one for a link to another host from this page, replaces the Requests.
+  // Monitor links here with an unregistered host: open its Request, which the load includes
+  // however old it is.
+  $effect(() => {
+    const next = data;
+
+    untrack(() => {
+      // A poll still loading for the previous URL must not replace this load.
+      runner.cancel();
+      model = next;
+
+      const linked = model.requests.find(
+        (request) => request.kind === "host" && request.clientIp === host,
+      );
+
+      if (linked) {
+        filter = linked.state;
+        selected = linked.id;
+        inspectorOpen = true;
+      } else if (host !== null) {
+        // The linked host has no Request; keep no other Request open in its place.
+        selected = null;
+        inspectorOpen = false;
+      }
+    });
+  });
 
   onMount(() => {
     const timer = setInterval(() => {
@@ -413,6 +466,10 @@
         >{/each}
     </div>
     {#if error}<p class="field-error" role="alert">{error}</p>{/if}
+    {#if missingHost}<p class="field-help mb-4" role="status">
+        {missingHost} has no host Request. Registering the host or reaching the queue
+        limit removes it.
+      </p>{/if}
     {#if model.retention.discarded !== "0"}<p
         class="field-help mb-4"
         role="status"

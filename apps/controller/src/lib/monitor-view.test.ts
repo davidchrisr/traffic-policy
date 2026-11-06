@@ -50,7 +50,13 @@ function snapshot(services: MonitorService[] = [service]): MonitorSnapshot {
     reviews: [],
     rules: [],
     localNetworks: [],
-    unregistered: { clientPackets: "0", upstreamPackets: "0", recent: [] },
+    unregistered: {
+      clientPackets: "0",
+      upstreamPackets: "0",
+      drops: [],
+      dropsTruncated: false,
+      samplesLimited: false,
+    },
   };
 }
 

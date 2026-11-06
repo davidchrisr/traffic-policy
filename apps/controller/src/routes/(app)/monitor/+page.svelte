@@ -203,6 +203,9 @@
       : [...expandedPeers, key];
   }
 
+  // Kept in a mustache so formatting cannot move or drop the spaces around it.
+  const separator = " · ";
+
   // The gateway's own addresses, which Monitor shows and rules name as the gateway.
   const gatewayAddresses = $derived(
     new Set(model.status.gateway?.addresses ?? []),
@@ -844,7 +847,7 @@
           </p>{/if}
       </div>
     </section>
-    {#if model.unregistered.recent.length || model.unregistered.clientPackets !== "0" || model.unregistered.upstreamPackets !== "0"}<section
+    {#if model.unregistered.drops.length || model.unregistered.clientPackets !== "0" || model.unregistered.upstreamPackets !== "0"}<section
         class="mt-6"
         aria-labelledby="monitor-unregistered"
       >
@@ -857,18 +860,53 @@
           ).toLocaleString()} packets from client networks, which also appear in Requests
           for registration; {BigInt(
             model.unregistered.upstreamPackets,
-          ).toLocaleString()} from upstream interfaces.
+          ).toLocaleString()} from upstream interfaces. Sampled drops are grouped
+          by source, destination, and service{model.unregistered.samplesLimited
+            ? ", from the newest 5,000 samples"
+            : ""}.
         </p>
-        {#each model.unregistered.recent as drop, index (index)}<div
-            class="list-row text-xs"
+        {#each model.unregistered.drops as drop (`${drop.side}|${drop.clientIp}|${drop.peerIp}|${drop.protocol}|${drop.port}`)}<div
+            class="list-row flex-wrap text-xs"
           >
-            <span class="muted shrink-0"><Time value={drop.at} /></span><span
-              class="min-w-0 flex-1 break-all font-mono"
+            <span class="muted shrink-0"><Time value={drop.lastAt} /></span
+            ><span class="min-w-0 flex-1 break-all font-mono"
               >{drop.clientIp} → {drop.peerIp}</span
             ><span class="muted shrink-0"
-              >{`${serviceLabel(drop.protocol, drop.port)} · ${drop.side === "client" ? "Client interface" : "Upstream"}`}</span
+              >{[
+                drop.gateway
+                  ? ["Gateway", drop.gateway.services.join(" or ")]
+                      .filter(Boolean)
+                      .join(" ")
+                  : null,
+                serviceLabel(drop.protocol, drop.port),
+                drop.side === "client" ? "Client interface" : "Upstream",
+              ]
+                .filter(Boolean)
+                .join(separator)}</span
             >
+            <p class="muted basis-full">
+              {drop.samples.toLocaleString()}
+              {drop.samples === 1 ? "sample" : "samples"} since
+              <Time value={drop.firstAt} />{#if drop.request}{separator}<a
+                  class="link-subtle"
+                  href={`/requests?host=${encodeURIComponent(drop.clientIp)}`}
+                  >Request</a
+                >{/if}
+            </p>
+            {#if drop.side === "client" && drop.gateway?.services.includes("DNS")}<p
+                class="muted basis-full break-words"
+              >
+                Lookups from this host in this span: {drop.names.length
+                  ? drop.names.map(({ name }) => name).join(", ")
+                  : "none seen by Suricata"}
+              </p>{/if}
           </div>{/each}
+        {#if model.unregistered.dropsTruncated}<p
+            class="text-pending mt-2 text-xs"
+          >
+            Showing the 50 most recent groups. Choose a shorter period to see
+            others.
+          </p>{/if}
       </section>{/if}
   </section>
   <InspectorPanel label="Traffic inspector" bind:open={inspectorOpen}>

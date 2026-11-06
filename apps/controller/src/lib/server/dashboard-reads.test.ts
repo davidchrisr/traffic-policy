@@ -533,7 +533,7 @@ describe("typed dashboard reads", () => {
         ruleId,
         "needs-review",
       );
-    const request = reads.requests(policy, status, 10000).requests[0]!;
+    const request = reads.requests(policy, status, 10000, null).requests[0]!;
     expect(request).toMatchObject({
       instanceId,
       peerIp: "10.22.242.20",

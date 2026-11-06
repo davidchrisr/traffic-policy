@@ -13,6 +13,9 @@ import {
   DashboardReads,
   parseDashboard,
   readRecent,
+  HOST_LOOKUP_LEAD_MS,
+  RECENT_CLIENTS,
+  hostLookups,
   type EventScan,
 } from "./dashboard-reads.ts";
 import { policyChanges } from "./policy-changes.ts";
@@ -114,9 +117,6 @@ export const MAX_HOST_REQUESTS = 1000;
 export const MAX_PENDING_REQUESTS =
   MAX_CONNECTION_REQUESTS + MAX_DNS_REQUESTS + MAX_HOST_REQUESTS;
 
-// A Request keeps the most recent distinct clients that hit it, newest first.
-export const RECENT_CLIENTS = 8;
-
 // Adds a value to a recent list stored as JSON [{ value, at }], newest first and distinct.
 export function recentValues(
   stored: SQLOutputValue | undefined,
@@ -152,10 +152,6 @@ export function latestValues(
       .slice(0, RECENT_CLIENTS),
   );
 }
-
-// A new host Request takes the lookups Suricata saw from the host from this long before its first
-// drop: they arrive first, since Suricata sees a packet before it is dropped.
-const HOST_LOOKUP_LEAD_MS = 60_000;
 
 const REQUEST_ROW_BYTES = 512n;
 
@@ -1104,21 +1100,14 @@ export class ControllerStore {
             event.type === "dns" && event.question
               ? [{ value: event.question, at }]
               : firstDrop
-                ? this.database
-                    .prepare(
-                      "SELECT question,MAX(at) AS latest FROM events WHERE type='dns' AND source='suricata' AND instance_id IS NULL AND json_extract(details,'$.details.clientIp')=? AND at>=? AND question!='' AND json_extract(details,'$.details.unregistered')='client' GROUP BY question ORDER BY latest DESC LIMIT ?",
-                    )
-                    .all(
-                      client.data,
-                      new Date(
-                        Date.parse(at) - HOST_LOOKUP_LEAD_MS,
-                      ).toISOString(),
-                      RECENT_CLIENTS,
-                    )
-                    .map((row) => ({
-                      value: String(row.question),
-                      at: String(row.latest),
-                    }))
+                ? hostLookups(
+                    this.database,
+                    client.data,
+                    new Date(
+                      Date.parse(at) - HOST_LOOKUP_LEAD_MS,
+                    ).toISOString(),
+                    null,
+                  )
                 : [];
 
           const last = [
@@ -2002,11 +1991,12 @@ export class ControllerStore {
       String(request.peer_ip),
     );
   }
-  requests() {
+  requests(host: string | null = null) {
     return this.reads.requests(
       this.desired(),
       this.status(),
       MAX_PENDING_REQUESTS,
+      host,
     );
   }
   // A dismissed host Request stops asking for review; the host's later drops still update it, and

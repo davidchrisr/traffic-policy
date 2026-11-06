@@ -80,6 +80,8 @@ adds its name to one a drop raised. Dismissing a host Request removes it from
 the review count and audits the dismissal; later drops still update it. It
 returns 404 `request_not_found` when no host Request waits for review at the
 address. States are `needs-review`, `applying`, `failed`, and `resolved`.
+`requests` lists the newest 500 by `lastAt`; an optional `host` address adds the
+host Request at that address when it is older, and an invalid one returns 400.
 `retention` reports `pending`, the combined `limit` of the connection, DNS, and
 host pools, `discarded` and `lastDiscardedAt` for scopes removed at a pool
 limit, and `dnsOmitted` and `lastDnsOmittedAt` for denied lookups the gateway
@@ -118,9 +120,15 @@ rule's destination rows are incomplete. `reviews` lists the scopes of
 needs-review requests that match a listed service. `unregistered` reports drops
 of connections with no instance on either end in the period: `clientPackets` and
 `upstreamPackets` counted by the side they arrived on, over the same counter
-buckets as `blockedTotals`, and `recent`, the newest 50 sampled drops with `at`,
-`side`, `clientIp` (the address that started the connection), `peerIp`,
-`protocol`, and `port`.
+buckets as `blockedTotals`, and `drops`, the newest 5,000 sampled drops grouped
+by `side`, `clientIp` (the address that started the connection), `peerIp`,
+`protocol`, and `port`, newest first. Each group has a `samples` count,
+`firstAt`, `lastAt`, `request` (set while the client has a host Request), and
+`gateway`, the gateway services its protocol and port match when `peerIp` is a
+gateway address, otherwise null. Client-side groups at the gateway's DNS service
+list in `names` up to eight names the client looked up from a minute before
+`firstAt` to `lastAt`. It returns the newest 50 groups and sets `dropsTruncated`
+beyond that; `samplesLimited` is set when more samples matched.
 
 History audit entries include `subjectRule`, the current rule when the subject
 is a rule that still exists, otherwise the newest complete rule recorded in the

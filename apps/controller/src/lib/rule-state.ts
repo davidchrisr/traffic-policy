@@ -87,8 +87,62 @@ export interface BuiltIn {
   service: string;
 }
 
-// The gateway's fixed accepts a service with the gateway can meet: its DNS gate, DHCP, the machine
-// link with the controller, and its lookups to the upstream resolver. DHCP is accepted only between
+// A fixed service of the gateway: the addresses it is accepted for, null for any, and for DHCP the
+// port its peer must send from.
+export interface GatewayService {
+  name: string;
+  addresses: string[] | null;
+  pair: number | null;
+}
+
+// The gateway's fixed services a protocol and port in one direction can be: its DNS gate, DHCP, the
+// machine link with the controller, and its lookups to the upstream resolver. The gateway serves
+// DHCP and may itself be a DHCP client, so each DHCP port is accepted from its pair in either
+// direction. The machine link and the upstream lookups can share a port.
+export function gatewayServices(
+  endpoint: GatewayEndpoint,
+  direction: Service["direction"],
+  protocol: number | null,
+  port: number | null,
+): GatewayService[] {
+  const udp = protocol === 17,
+    tcp = protocol === 6;
+
+  const pair = udp ? DHCP_PAIRS.get(port) : undefined;
+
+  return [
+    ...(direction === "outgoing" && (udp || tcp) && port === endpoint.dnsPort
+      ? [{ name: "DNS", addresses: null, pair: null }]
+      : []),
+    ...(pair ? [{ name: "DHCP", addresses: null, pair }] : []),
+    ...(tcp &&
+    port ===
+      (direction === "outgoing"
+        ? endpoint.machinePort
+        : endpoint.controllerPort)
+      ? [
+          {
+            name: "controller link",
+            addresses: endpoint.controllerAddresses,
+            pair: null,
+          },
+        ]
+      : []),
+    ...(direction === "incoming" &&
+    (udp || tcp) &&
+    port === endpoint.upstreamDns.port
+      ? [
+          {
+            name: "upstream DNS",
+            addresses: [endpoint.upstreamDns.address],
+            pair: null,
+          },
+        ]
+      : []),
+  ];
+}
+
+// The gateway's fixed accepts a service with the gateway can meet. DHCP is accepted only between
 // the protocol's ports, which Monitor does not record, so it is always conditional. The machine
 // link and lookups are accepted only for those addresses, so they cover a whole service only when
 // the instance is nothing but those addresses. ICMPv6 neighbour discovery and MLD are accepted too,
@@ -99,44 +153,30 @@ function builtInAccept(
   tree: ScopeTree,
   instances: Instance[],
 ): BuiltIn | null {
-  const udp = service.protocol === 17,
-    tcp = service.protocol === 6;
-
   const admitted = {
     direction: service.direction,
     service: serviceLabel(service.protocol, service.port),
   };
 
-  if (
-    service.direction === "outgoing" &&
-    (udp || tcp) &&
-    service.port === endpoint.dnsPort
-  )
-    return { name: "DNS", condition: null, ...admitted };
+  const services = gatewayServices(
+    endpoint,
+    service.direction,
+    service.protocol,
+    service.port,
+  );
 
-  // The gateway serves DHCP and may itself be a DHCP client, so each port is accepted from its pair
-  // in either direction.
-  const pair = udp ? DHCP_PAIRS.get(service.port) : undefined;
+  const open = services.find(({ addresses }) => !addresses);
 
-  if (pair)
-    return { name: "DHCP", condition: `from port ${pair}`, ...admitted };
+  if (open)
+    return {
+      name: open.name,
+      condition: open.pair ? `from port ${open.pair}` : null,
+      ...admitted,
+    };
 
-  // The machine link and the upstream lookups can share a port; their addresses then combine.
-  const accepts = [
-    ...(tcp &&
-    service.port ===
-      (service.direction === "outgoing"
-        ? endpoint.machinePort
-        : endpoint.controllerPort)
-      ? [["controller link", endpoint.controllerAddresses] as const]
-      : []),
-    ...(service.direction === "incoming" &&
-    (udp || tcp) &&
-    service.port === endpoint.upstreamDns.port
-      ? [["upstream DNS", [endpoint.upstreamDns.address]] as const]
-      : []),
-  ].flatMap(([name, addresses]) => {
-    const inside = addresses.filter((address) => {
+  // Services accepted for some addresses combine theirs.
+  const accepts = services.flatMap(({ name, addresses }) => {
+    const inside = addresses!.filter((address) => {
       const entry = tree.find(address);
 
       return entry && ScopeTree.instanceOf(entry) === service.instanceId;

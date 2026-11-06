@@ -631,8 +631,15 @@ first drop on, so its first names can be missing only when history retention has
 already removed them; queries alone create no Request. Each client's name is
 kept once per 60 seconds within the denial limits. Registering an address that
 covers the host resolves the Request, and its later denials become ordinary
-Requests. Upstream drops create no Request; Monitor shows their counts and
-newest samples beside client-side ones.
+Requests. Upstream drops create no Request; Monitor shows their counts beside
+client-side ones, and groups the newest 5,000 sampled drops of either side by
+source, destination, and service, showing the 50 newest groups with sample
+counts, first and last times, and a link to the host's Request. A host's drops
+at the gateway's DNS listener, which it reaches directly or through forwarding
+the operator configured, list up to eight names it looked up from a minute
+before their first sample to their last; these are the host's lookups in that
+span, not a pairing of names with drops. The Requests page loads a linked host's
+Request even when it is older than the newest 500 Requests it lists.
 
 The controller retains pending requests in separate pools: 5,000 connection
 scopes, 5,000 DNS scopes, at most 500 of them per instance, and 1,000 host

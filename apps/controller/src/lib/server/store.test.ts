@@ -2619,11 +2619,54 @@ describe("subnet instances and unregistered hosts", () => {
     }
   });
 
-  it("shows unregistered drop counts and samples in Monitor", async () => {
+  it("shows unregistered drop counts and grouped samples in Monitor", async () => {
     const store = await subnetStore();
-    const at = new Date().toISOString();
+    const start = Date.now() - 600_000;
+
+    const at = (seconds: number) =>
+      new Date(start + seconds * 1000).toISOString();
+
+    const lookup = (question: string, seconds: number): GatewayEvent => ({
+      ...retentionEvent(),
+      observedAt: at(seconds),
+      source: "suricata",
+      question,
+      // Sent to another resolver and forwarded to the gateway's listener.
+      peerIp: "1.1.1.1",
+      details: { clientIp: "10.20.0.5", unregistered: "client" },
+    });
+
+    const drop = (
+      clientIp: string,
+      side: "client" | "upstream",
+      seconds: number,
+      peerIp?: string,
+      port?: number,
+    ): GatewayEvent => {
+      const event = {
+        ...dropped(clientIp, side, peerIp),
+        observedAt: at(seconds),
+      };
+
+      if (port !== undefined) {
+        event.protocol = 17;
+        event.port = port;
+      }
+
+      return event;
+    };
 
     try {
+      store.gatewayHealth({
+        endpoint: {
+          addresses: ["10.20.0.1"],
+          dnsPort: 5353,
+          machinePort: 9443,
+          controllerPort: 443,
+          controllerAddresses: ["10.10.0.2"],
+          upstreamDns: { address: "192.0.2.53", port: 53 },
+        },
+      });
       store.ingest(
         batch([
           {
@@ -2631,30 +2674,138 @@ describe("subnet instances and unregistered hosts", () => {
             type: "blocked_count",
             source: "nftables",
             question: null,
-            observedAt: at,
+            observedAt: at(0),
             details: { packets: 40, unregistered: "upstream" },
           },
-          { ...dropped("198.51.100.7", "upstream"), observedAt: at },
+          drop("198.51.100.7", "upstream", 0),
+          // Lookups a minute before the DNS drops' first sample on name them; older ones do not.
+          lookup("stale.example", -70),
+          lookup("wanted.example", -50),
+          drop("10.20.0.5", "client", 10, "10.20.0.1", 5353),
+          drop("10.20.0.5", "client", 20, "10.20.0.1", 5353),
+          lookup("later.example", 20),
+          // Drops to another gateway service, here its machine link, carry no names.
+          { ...drop("10.20.0.5", "client", 30, "10.20.0.1"), port: 9443 },
         ]),
       );
 
       const monitor = await store.monitor(
-        new Date(Date.now() - 3600000).toISOString(),
+        new Date(start - 3600000).toISOString(),
         new Date(Date.now() + 60000).toISOString(),
       );
 
-      expect(monitor.unregistered).toMatchObject({
+      expect(monitor.unregistered).toEqual({
         clientPackets: "0",
         upstreamPackets: "40",
-        recent: [
+        drops: [
+          {
+            side: "client",
+            clientIp: "10.20.0.5",
+            peerIp: "10.20.0.1",
+            protocol: 6,
+            port: 9443,
+            samples: 1,
+            firstAt: at(30),
+            lastAt: at(30),
+            gateway: { services: ["controller link"] },
+            request: true,
+            names: [],
+          },
+          {
+            side: "client",
+            clientIp: "10.20.0.5",
+            peerIp: "10.20.0.1",
+            protocol: 17,
+            port: 5353,
+            samples: 2,
+            firstAt: at(10),
+            lastAt: at(20),
+            gateway: { services: ["DNS"] },
+            request: true,
+            names: [
+              { name: "later.example", at: at(20) },
+              { name: "wanted.example", at: at(-50) },
+            ],
+          },
           {
             side: "upstream",
             clientIp: "198.51.100.7",
             peerIp: "93.184.216.34",
+            protocol: 6,
             port: 443,
+            samples: 1,
+            firstAt: at(0),
+            lastAt: at(0),
+            gateway: null,
+            request: false,
+            names: [],
           },
         ],
+        dropsTruncated: false,
+        samplesLimited: false,
       });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("marks Monitor's unregistered drop groups as truncated and read from the newest samples", async () => {
+    const store = await subnetStore();
+    const start = Date.now() - 600_000;
+
+    // 5,001 samples across 51 destinations, more than one read groups and returns.
+    const drops = Array.from({ length: 5001 }, (_, index) => ({
+      ...dropped("198.51.100.7", "upstream", `203.0.113.${index % 51}`),
+      observedAt: new Date(start + index * 100).toISOString(),
+    }));
+
+    try {
+      store.ingest(batch(drops.slice(0, 4000)));
+      store.ingest(batch(drops.slice(4000)));
+
+      const { unregistered } = await store.monitor(
+        new Date(start - 60000).toISOString(),
+        new Date(Date.now() + 60000).toISOString(),
+      );
+
+      expect(unregistered.drops).toHaveLength(50);
+      expect(unregistered.dropsTruncated).toBe(true);
+      expect(unregistered.samplesLimited).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("includes a linked host Request older than the newest Requests", async () => {
+    const store = await subnetStore();
+    const start = Date.now() - 600_000;
+
+    const drop = (clientIp: string, seconds: number) => ({
+      ...dropped(clientIp, "client"),
+      observedAt: new Date(start + seconds * 1000).toISOString(),
+    });
+
+    try {
+      store.ingest(
+        batch([
+          drop("10.30.0.1", 0),
+          ...Array.from({ length: 500 }, (_, index) =>
+            drop(`10.31.${Math.floor(index / 256)}.${index % 256}`, index + 1),
+          ),
+        ]),
+      );
+
+      const linked = (host: string | null) =>
+        store
+          .requests(host)
+          .requests.filter((request) => request.id === "10.30.0.1");
+
+      expect(linked(null)).toEqual([]);
+      expect(linked("10.30.0.1")).toMatchObject([
+        { kind: "host", clientIp: "10.30.0.1", state: "needs-review" },
+      ]);
+      // A host already among the newest Requests is not listed twice.
+      expect(store.requests("10.31.1.243").requests).toHaveLength(500);
     } finally {
       store.close();
     }

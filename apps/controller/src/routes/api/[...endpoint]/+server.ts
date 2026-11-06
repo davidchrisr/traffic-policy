@@ -226,7 +226,11 @@ const handle: RequestHandler = async (event) => {
     }
 
     if (path === "requests" && method === "GET")
-      return Response.json(store().requests());
+      return Response.json(
+        store().requests(
+          ipSchema.nullable().parse(event.url.searchParams.get("host")),
+        ),
+      );
 
     const dismiss = path?.match(/^requests\/hosts\/([^/]+)\/dismiss$/)?.[1];
 

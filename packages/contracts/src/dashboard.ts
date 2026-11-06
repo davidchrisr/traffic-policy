@@ -225,25 +225,45 @@ export const monitorSnapshotSchema = z
     // Settings localNetworks, which hostname and domain rules refuse as DNS answers.
     localNetworks: z.array(cidrSchema),
     // Drops of connections with no instance on either end in the period: packet counts by the side
-    // they arrived on, and the newest sampled drops. Client-side drops also become host Requests.
+    // they arrived on, and the newest sampled drops grouped by side, client, destination, and
+    // service, newest first. `gateway` is set for a destination on the gateway, with the fixed
+    // services of the gateway its protocol and port are, such as "DNS", or none. Client-side drops
+    // also become host Requests; `request` is set while the client has one. A client's drops to the
+    // gateway's DNS list up to eight names it looked up from a minute before their first sample to
+    // their last. dropsTruncated is set when older groups were left out, and samplesLimited when the
+    // groups were read from only the newest samples.
     unregistered: z
       .object({
         clientPackets: counterSchema,
         upstreamPackets: counterSchema,
-        recent: z
+        drops: z
           .array(
             z
               .object({
-                at: instantSchema,
                 side: z.enum(["client", "upstream"]),
                 clientIp: ipSchema,
                 peerIp: ipSchema,
                 protocol: z.number().int().min(0).max(255).nullable(),
                 port: z.number().int().min(0).max(65535).nullable(),
+                samples: z.number().int().min(1),
+                firstAt: instantSchema,
+                lastAt: instantSchema,
+                gateway: z
+                  .object({ services: z.array(z.string()).max(4) })
+                  .strict()
+                  .nullable(),
+                request: z.boolean(),
+                names: z
+                  .array(
+                    z.object({ name: z.string(), at: instantSchema }).strict(),
+                  )
+                  .max(8),
               })
               .strict(),
           )
           .max(50),
+        dropsTruncated: z.boolean(),
+        samplesLimited: z.boolean(),
       })
       .strict(),
   })

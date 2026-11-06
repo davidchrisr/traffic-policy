@@ -14,10 +14,12 @@ import {
   type MonitorSelection,
 } from "@traffic-policy/contracts/dashboard";
 import { describeRule } from "@traffic-policy/core";
+import { gatewayServices } from "../rule-state.ts";
 import { ServiceError } from "@traffic-policy/core/io";
 import { registrableDomain } from "@traffic-policy/core/domains";
 import {
   eventSchema,
+  canonicalIp,
   canonicalName,
   nameSchema,
   ruleSchema,
@@ -25,6 +27,9 @@ import {
 
 // The most matching events grouped for one Monitor event summary.
 const EVENT_SUMMARY_LIMIT = 5000;
+
+// The most unregistered drop groups one Monitor read returns.
+const UNREGISTERED_DROP_GROUPS = 50;
 
 // The most events, of any instance, read in one slice of an event summary. A recent summary reads
 // one slice; a whole-period scan reads slice after slice and lets other requests run between them.
@@ -62,15 +67,41 @@ const auditClientSchema = z.object({
   client: z.object({ address: z.string(), agent: z.string() }),
 });
 
+// A Request keeps the most recent distinct clients that hit it, newest first.
+export const RECENT_CLIENTS = 8;
+
 // A stored recent list, newest first and distinct, JSON [{ value, at }].
 const recentSchema = z
   .array(z.object({ value: z.string(), at: z.string() }).strict())
-  .max(8);
+  .max(RECENT_CLIENTS);
 
 export function readRecent(stored: SQLOutputValue | undefined) {
   return stored === undefined || stored === null
     ? []
     : recentSchema.parse(JSON.parse(String(stored)));
+}
+
+// Suricata sees a packet before it is dropped, and the gateway sends a host's repeated name once a
+// minute, so an unregistered host's lookups behind its drops are those from this long before them.
+export const HOST_LOOKUP_LEAD_MS = 60_000;
+
+// The names an unregistered host looked up from `from` until `to`, or with no end, each at its
+// latest time, newest first, up to RECENT_CLIENTS.
+export function hostLookups(
+  database: DatabaseSync,
+  clientIp: string,
+  from: string,
+  to: string | null,
+) {
+  // A plain upper bound, so the index range ends at `to`.
+  const until = to === null ? "" : " AND at<=?";
+
+  return database
+    .prepare(
+      `SELECT question,MAX(at) AS latest FROM events WHERE type='dns' AND source='suricata' AND instance_id IS NULL AND json_extract(details,'$.details.clientIp')=? AND at>=?${until} AND question!='' AND json_extract(details,'$.details.unregistered')='client' GROUP BY question ORDER BY latest DESC LIMIT ?`,
+    )
+    .all(clientIp, from, ...(to === null ? [] : [to]), RECENT_CLIENTS)
+    .map((row) => ({ value: String(row.question), at: String(row.latest) }));
 }
 
 // The browser family from a User-Agent header, checked in this order because Edge and headless
@@ -141,12 +172,30 @@ export class DashboardReads {
         }),
       );
   }
-  requests(policy: DashboardPolicy, status: DashboardStatus, limit: number) {
+  // The newest 500 Requests of every kind, and the host Request at `host` when it is older.
+  requests(
+    policy: DashboardPolicy,
+    status: DashboardStatus,
+    limit: number,
+    host: string | null,
+  ) {
     const rows = this.database
       .prepare(
         "SELECT id,'connection' AS kind,instance_id,direction,peer_ip,protocol,port,NULL AS question,NULL AS query_type,attempts,first_at,last_at,rule_id,state,clients,NULL AS destinations,NULL AS names,julianday(last_at) AS time FROM requests WHERE state != ? UNION ALL SELECT id,'dns' AS kind,instance_id,NULL,NULL,NULL,NULL,question,query_type,attempts,first_at,last_at,rule_id,state,clients,NULL,NULL,julianday(last_at) AS time FROM dns_requests WHERE state != ? UNION ALL SELECT client_ip,'host' AS kind,NULL,NULL,client_ip,NULL,NULL,NULL,NULL,attempts,first_at,last_at,NULL,CASE WHEN dismissed_at IS NULL THEN 'needs-review' ELSE 'dismissed' END,NULL,destinations,names,julianday(last_at) AS time FROM host_requests ORDER BY time DESC,id DESC LIMIT 500",
       )
       .all("resolved", "resolved");
+
+    if (
+      host !== null &&
+      !rows.some((row) => row.kind === "host" && row.id === host)
+    )
+      rows.push(
+        ...this.database
+          .prepare(
+            "SELECT client_ip AS id,'host' AS kind,client_ip AS peer_ip,attempts,first_at,last_at,CASE WHEN dismissed_at IS NULL THEN 'needs-review' ELSE 'dismissed' END AS state,destinations,names FROM host_requests WHERE client_ip=?",
+          )
+          .all(host),
+      );
 
     const count = this.database
       .prepare(
@@ -366,8 +415,17 @@ export class DashboardReads {
     });
   }
   // Drops of connections with no instance on either end: counted packets by side over the counter
-  // buckets of the period, and the newest sampled drops, which share one history group.
-  private unregistered(from: string, to: string, now: number) {
+  // buckets of the period, and the newest sampled drops, which share one history group, grouped by
+  // side, client, destination, and service. Grouping reads at most EVENT_SUMMARY_LIMIT samples and
+  // returns the newest UNREGISTERED_DROP_GROUPS groups. A client's drops to the gateway's DNS
+  // listener, which it reaches directly or through forwarding the operator configured, carry the
+  // names it looked up over their span.
+  private unregistered(
+    from: string,
+    to: string,
+    now: number,
+    gateway: DashboardStatus["gateway"],
+  ) {
     const resolution = Date.parse(from) >= now - 86400000 ? 60 : 3600;
 
     const packets = (side: "client" | "upstream") =>
@@ -384,26 +442,88 @@ export class DashboardReads {
           )!.packets,
       );
 
+    const samples = this.database
+      .prepare(
+        "SELECT at,peer_ip,json_extract(details,'$.details.unregistered') AS side,json_extract(details,'$.details.clientIp') AS client,json_extract(details,'$.protocol') AS protocol,json_extract(details,'$.port') AS port FROM events WHERE history_group='blocked:::' AND at>=? AND at<? ORDER BY at DESC LIMIT ?",
+      )
+      .all(from, to, EVENT_SUMMARY_LIMIT + 1);
+
+    const groups = new Map<
+      string,
+      {
+        side: string;
+        clientIp: string;
+        peerIp: string;
+        protocol: number | null;
+        port: number | null;
+        samples: number;
+        firstAt: string;
+        lastAt: string;
+      }
+    >();
+
+    // Samples come newest first, so a group's first sample sets its last time.
+    for (const row of samples.slice(0, EVENT_SUMMARY_LIMIT)) {
+      const drop = {
+        side: String(row.side),
+        clientIp: canonicalIp(String(row.client)),
+        peerIp: String(row.peer_ip),
+        protocol: row.protocol === null ? null : Number(row.protocol),
+        port: row.port === null ? null : Number(row.port),
+      };
+
+      const key = JSON.stringify(Object.values(drop));
+      const group = groups.get(key);
+
+      if (group) {
+        group.samples++;
+        group.firstAt = String(row.at);
+      } else
+        groups.set(key, {
+          ...drop,
+          samples: 1,
+          firstAt: String(row.at),
+          lastAt: String(row.at),
+        });
+    }
+
+    const requested = this.database.prepare(
+      "SELECT 1 FROM host_requests WHERE client_ip=?",
+    );
+
     return {
       clientPackets: packets("client"),
       upstreamPackets: packets("upstream"),
-      recent: this.database
-        .prepare(
-          "SELECT details FROM events WHERE history_group='blocked:::' AND at>=? AND at<? ORDER BY at DESC LIMIT 50",
-        )
-        .all(from, to)
-        .map((row) => {
-          const event = eventSchema.parse(JSON.parse(String(row.details)));
+      drops: [...groups.values()]
+        .slice(0, UNREGISTERED_DROP_GROUPS)
+        .map((group) => {
+          const client = group.side === "client";
+
+          // A drop reaches the gateway as a connection to its service, whichever side it came from.
+          const services =
+            gateway && gateway.addresses.includes(group.peerIp)
+              ? gatewayServices(gateway, "outgoing", group.protocol, group.port)
+              : null;
 
           return {
-            at: event.observedAt,
-            side: event.details.unregistered,
-            clientIp: event.details.clientIp,
-            peerIp: event.peerIp,
-            protocol: event.protocol,
-            port: event.port,
+            ...group,
+            gateway: services && { services: services.map(({ name }) => name) },
+            request: client && requested.get(group.clientIp) !== undefined,
+            names:
+              client && services?.some(({ name }) => name === "DNS")
+                ? hostLookups(
+                    this.database,
+                    group.clientIp,
+                    new Date(
+                      Date.parse(group.firstAt) - HOST_LOOKUP_LEAD_MS,
+                    ).toISOString(),
+                    group.lastAt,
+                  ).map(({ value, at }) => ({ name: value, at }))
+                : [],
           };
         }),
+      dropsTruncated: groups.size > UNREGISTERED_DROP_GROUPS,
+      samplesLimited: samples.length > EVENT_SUMMARY_LIMIT,
     };
   }
   // Counted packets per Block rule and direction for one instance, beside the samples recorded
@@ -862,7 +982,7 @@ export class DashboardReads {
       reviews,
       rules: policy.rules,
       localNetworks: policy.settings.localNetworks,
-      unregistered: this.unregistered(from, to, now),
+      unregistered: this.unregistered(from, to, now, status.gateway),
     });
   }
 }
