@@ -1097,7 +1097,63 @@ describe("authoritative DNS leases", () => {
 });
 
 describe("native compilation and contracts", () => {
-  it("keeps endpoint checks and ordered continuations while DNS transactions avoid static policy replacement", () => {
+  it("bounds chain traversal depth independently of the number of DNS rules", () => {
+    const value = policy(
+      Array.from({ length: 32 }, (_, index) =>
+        rule({
+          instanceId: clientId,
+          direction: "outgoing",
+          peer: {
+            kind: index % 2 === 0 ? "hostname" : "domain",
+            value: `service${index}.example`,
+          },
+          action: index % 5 === 0 ? "block" : "allow",
+        }),
+      ),
+    );
+
+    value.instances[0]!.addresses.push("fd10::10");
+
+    const program = compileNftables(value, [], {
+      marks: marksFor(value),
+      tableExists: false,
+      dnsPort: 5353,
+      infrastructure,
+      now,
+      policyHash: "a".repeat(64),
+    });
+
+    const chains = new Map(
+      [...program.matchAll(/^  chain (\S+) \{\n([\s\S]*?)^  \}/gm)].map(
+        (match) => [match[1]!, match[2]!],
+      ),
+    );
+
+    const depths = new Map<string, number>();
+
+    const depth = (name: string): number => {
+      const known = depths.get(name);
+
+      if (known !== undefined) return known;
+
+      const result =
+        1 +
+        Math.max(
+          0,
+          ...[...chains.get(name)!.matchAll(/\b(?:jump|goto) (\S+)/g)].map(
+            (match) => depth(match[1]!),
+          ),
+        );
+
+      depths.set(name, result);
+
+      return result;
+    };
+
+    for (const name of chains.keys())
+      if (/^[oi][46]_/.test(name)) expect(depth(name)).toBeLessThanOrEqual(5);
+  });
+  it("keeps endpoint checks and ordered DNS calls while DNS transactions avoid static policy replacement", () => {
     const dns = rule({
       instanceId: clientId,
       direction: "outgoing",
@@ -1130,9 +1186,9 @@ describe("native compilation and contracts", () => {
       policyHash: "a".repeat(64),
     });
 
-    expect(full).toContain(`goto ${group.name}`);
-    expect(full).toContain(`goto ${group.next}`);
-    expect(full).toContain(`chain ${group.next}`);
+    expect(full).toContain(`jump ${group.name}`);
+    expect(full).not.toContain("dns-continuation");
+    expect(full).not.toMatch(/chain c[46]_/);
     expect(full).toContain("10.22.242.20 : jump i4_");
     const update = compileDnsUpdate(groups, now + 500);
     expect(update).toContain(`flush chain inet traffic_policy ${group.name}`);
@@ -1147,7 +1203,8 @@ describe("native compilation and contracts", () => {
     );
 
     expect(expiry).not.toContain("add element");
-    expect(expiry).toContain(`goto ${group.next}`);
+    expect(expiry).toContain(`flush chain inet traffic_policy ${group.name}`);
+    expect(expiry).not.toContain("add rule");
   });
   it("marks connections a DNS Allow rule admits and keeps them open while the rule is in force", () => {
     const allowed = rule({
@@ -1158,6 +1215,7 @@ describe("native compilation and contracts", () => {
       portStart: 443,
       portEnd: 443,
       action: "allow",
+      notBefore: timestamp,
       expiresAt: "2026-10-11T00:00:00.000Z",
       dnsDestinations: ["10.22.242.0/24"],
     });
@@ -1196,12 +1254,14 @@ describe("native compilation and contracts", () => {
 
     const instance = chainBody(
       program,
-      `o4_${nodeName(value, "10.22.241.10")}`,
+      `r_o4_${nodeName(value, "10.22.241.10")}`,
     ).split("\n");
 
     const keepOpen = instance.findIndex((line) =>
       line.includes("ct state established ct mark and 0xffffff == 7"),
     );
+
+    expect(program).not.toContain("ct state != established ct mark set");
 
     expect(instance[keepOpen]).toContain(
       `meta time < ${Date.parse(allowed.expiresAt!) / 1000} counter return comment "rule:${allowed.id}"`,
@@ -1210,13 +1270,17 @@ describe("native compilation and contracts", () => {
     expect(instance[keepOpen + 1]).toContain(
       `@${dnsSetName(`4|${clientId}@32`, allowed.id, 4)}`,
     );
+    expect(instance[keepOpen + 2]).toContain(
+      "meta mark and 0x80000000 != 0 counter return",
+    );
+    expect(instance[keepOpen + 2]).not.toContain("ct state established");
 
     const [admit, deny] = dnsChains(value, grants, marks);
 
     expect(admit!.mark).toBe(7);
     expect(deny!.mark).toBeNull();
     expect(compileDnsUpdate([admit!], now)).toContain(
-      `ct original ip daddr 10.22.242.20 meta time < ${Date.parse(admit!.bindings[0]!.expiresAt) / 1000} ct mark set ct mark and 0xff000000 or 7 counter return`,
+      `ct original ip daddr 10.22.242.20 meta time < ${Date.parse(admit!.bindings[0]!.expiresAt) / 1000} ct mark set ct mark and 0xff000000 or 7 counter meta mark set meta mark or 0x80000000 return`,
     );
     expect(program).not.toContain("ct mark set ct mark and 0xff000000 or 0");
     expect(connectionMarkScopes(value)).toEqual([

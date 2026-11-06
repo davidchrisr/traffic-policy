@@ -159,6 +159,9 @@ export function blockTraceChain(
 // Connection marks use the low 24 bits of the conntrack mark; the high 8 bits stay with other tools.
 export const CONNECTION_MARK_MASK = 0xffffff;
 
+// Endpoint wrappers restore this borrowed packet bit before an allowed packet returns to its hook.
+const DNS_ADMISSION_FLAG = 0x80000000;
+
 // The connection mark of each DNS Allow rule for each path holding its permissions, keyed by
 // connectionMarkScope.
 export type MarkAssignments = ReadonlyMap<string, number>;
@@ -357,7 +360,6 @@ export interface DnsChain {
   // The scope path holding the permissions this chain binds.
   path: string;
   name: string;
-  next: string;
   set: string;
   family: 4 | 6;
   ruleId: string;
@@ -414,13 +416,12 @@ export function dnsChains(
         result.push({
           path,
           name: `l${identity}`,
-          next: `c${identity}`,
           set: dnsSetName(path, rule.id, node.family),
           family: node.family,
           ruleId: rule.id,
           verdict:
             rule.action === "allow"
-              ? "return"
+              ? `meta mark set meta mark or 0x${DNS_ADMISSION_FLAG.toString(16)} return`
               : `jump ${blockTraceChain(rule, node.instanceId, direction, node.family, policy.revision)}`,
           mark: connectionMark(marks, rule, path),
           bindings: [
@@ -436,13 +437,10 @@ export function dnsChains(
 }
 
 export function dnsChainRules(chain: DnsChain): string[] {
-  return [
-    ...chain.bindings.map(
-      (binding) =>
-        `ct original ${chain.family === 4 ? "ip" : "ip6"} daddr ${binding.address} meta time < ${instant(binding.expiresAt)}${chain.mark === null ? "" : ` ct mark set ct mark and 0x${(~CONNECTION_MARK_MASK >>> 0).toString(16)} or ${chain.mark}`} counter ${chain.verdict} comment ${quote(`rule:${chain.ruleId}`)}`,
-    ),
-    `goto ${chain.next} comment "dns-continuation"`,
-  ];
+  return chain.bindings.map(
+    (binding) =>
+      `ct original ${chain.family === 4 ? "ip" : "ip6"} daddr ${binding.address} meta time < ${instant(binding.expiresAt)}${chain.mark === null ? "" : ` ct mark set ct mark and 0x${(~CONNECTION_MARK_MASK >>> 0).toString(16)} or ${chain.mark}`} counter ${chain.verdict} comment ${quote(`rule:${chain.ruleId}`)}`,
+  );
 }
 
 // One native transaction replaces only the changed DNS chains and their sets. Chains of one rule
@@ -618,8 +616,29 @@ export function compileNftables(
 
   for (const node of nodes)
     for (const direction of ["outgoing", "incoming"] as const) {
-      lines.push(`  chain ${direction[0]}${node.family}_${node.name} {`);
+      const name = `${direction[0]}${node.family}_${node.name}`;
       const rules = nodeRules(policy, node, direction);
+
+      if (direction === "outgoing" && rules.some(keepsConnections))
+        lines.push(
+          `  chain ${name} {`,
+          `    meta mark and 0x${DNS_ADMISSION_FLAG.toString(16)} != 0 goto m_${name}`,
+          `    goto u_${name}`,
+          "  }",
+          `  chain m_${name} {`,
+          `    meta mark set meta mark and 0x${(~DNS_ADMISSION_FLAG >>> 0).toString(16)}`,
+          `    jump r_${name}`,
+          `    meta mark set meta mark or 0x${DNS_ADMISSION_FLAG.toString(16)}`,
+          "    return",
+          "  }",
+          `  chain u_${name} {`,
+          `    jump r_${name}`,
+          `    meta mark set meta mark and 0x${(~DNS_ADMISSION_FLAG >>> 0).toString(16)}`,
+          "    return",
+          "  }",
+          `  chain r_${name} {`,
+        );
+      else lines.push(`  chain ${name} {`);
 
       for (const rule of rules) {
         if (rule.peer.kind === "hostname" || rule.peer.kind === "domain") {
@@ -640,18 +659,16 @@ export function compileNftables(
             direction,
             policy.revision,
             undefined,
-            `goto ${group.name}`,
+            `jump ${group.name}`,
           );
 
           if (expression)
             lines.push(...expression.map((value) => `    ${value}`));
-          // goto keeps the original endpoint caller on the stack. A live
-          // permission returns to it; a miss continues with the next rule.
-          lines.push(
-            `    goto ${group.next}`,
-            "  }",
-            `  chain ${group.next} {`,
-          );
+
+          if (group.mark !== null)
+            lines.push(
+              `    meta mark and 0x${DNS_ADMISSION_FLAG.toString(16)} != 0 counter return comment ${quote(`rule:${rule.id}`)}`,
+            );
           continue;
         }
 

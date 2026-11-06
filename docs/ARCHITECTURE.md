@@ -484,12 +484,18 @@ their lifetime by less than one second without extending the original TTL.
 Scheduled rule deadlines already require whole-second precision. The resolver
 returns a failure when a permission expires before installation is confirmed.
 
-DNS selectors enter dedicated admission chains. A live Allow returns to the
-original endpoint caller; a miss continues with the next ordered rule. The
-transaction replaces only changed DNS chains and timeout sets. Command
-completion precedes memory publication and acknowledgement; unchanged grants use
-memory. Older concurrent replies cannot overwrite a newer authoritative
-response. Permission counts deduplicate shared address/rule pairs.
+Each endpoint chain calls dedicated DNS admission chains in rule order. A live
+Allow sets its connection mark and a packet-local admission flag before
+returning. The endpoint chain checks that flag before returning to the remaining
+endpoint checks; a miss continues with the next ordered rule. Entry wrappers
+restore the borrowed packet-mark bit on allowed traffic. Connection marks are
+never cleared to communicate a miss: related ICMP errors can share an
+established flow's conntrack entry. Inherited marks on separate related
+connections do not prove fresh admission. Chain depth stays constant as DNS
+rules are added. The transaction replaces only changed DNS chains and timeout
+sets. Command completion precedes memory publication and acknowledgement;
+unchanged grants use memory. Older concurrent replies cannot overwrite a newer
+authoritative response. Permission counts deduplicate shared address/rule pairs.
 
 The controller retries health reads after transient failures. Only an
 unconfirmed desired revision triggers full policy delivery, avoiding
