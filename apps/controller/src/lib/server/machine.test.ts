@@ -76,14 +76,18 @@ const receipt = (policy: Policy): GatewayReceipt => ({
 
 // Answers a PUT with the submitted policy's receipt and a status read with `status`.
 function gateway(status?: () => ReturnType<typeof gatewayHealthSchema.parse>) {
-  return vi.fn<typeof requestJson>(async (url, _tls, method = "GET", body) => {
-    if (method === "PUT") return receipt(policySchema.parse(body));
-    expect(url.pathname).toBe("/v1/status");
+  return vi.fn<typeof requestJson>(
+    async (url, _tls, method = "GET", body, _timeout, onResponse) => {
+      onResponse?.();
 
-    if (!status) throw new Error("Unexpected gateway status request");
+      if (method === "PUT") return receipt(policySchema.parse(body));
+      expect(url.pathname).toBe("/v1/status");
 
-    return status();
-  });
+      if (!status) throw new Error("Unexpected gateway status request");
+
+      return status();
+    },
+  );
 }
 
 it.each(["not_initialized", "enforcement_restore_failed"])(
@@ -129,28 +133,73 @@ it("sends the desired policy again when the gateway restored another revision", 
     config.tls,
     "PUT",
     second,
+    undefined,
+    expect.any(Function),
   );
   expect(store.status().appliedRevision).toBe(second.revision);
 });
 
-it("confirms a matching gateway receipt and records other failures before passing them on", async () => {
-  const store = await controller();
-  await deliverPolicy(store, config, gateway());
+it.each(["health", "policy"])(
+  "records authenticated %s replies separately from policy success and connection failures",
+  async (operation) => {
+    const store = await controller();
+    await deliverPolicy(store, config, gateway());
 
-  const healthy = gateway(() => ({ receipt: receipt(store.desired()) }));
-  await deliverPolicy(store, config, healthy);
-  expect(healthy).toHaveBeenCalledTimes(1);
+    const healthy = gateway(() => ({ receipt: receipt(store.desired()) }));
+    await deliverPolicy(store, config, healthy);
+    expect(healthy).toHaveBeenCalledTimes(1);
 
-  const unavailable = gateway(() => {
-    throw new ServiceError(503, "gateway_unavailable", "Gateway is down");
-  });
+    if (operation === "policy")
+      store.mutation(
+        store.desired().revision,
+        "settings-updated",
+        "Settings",
+        (value) => value,
+      );
 
-  await expect(deliverPolicy(store, config, unavailable)).rejects.toThrow(
-    "Gateway is down",
-  );
-  expect(unavailable).toHaveBeenCalledTimes(1);
-  expect(store.status().lastError).toBe("Gateway is down");
-});
+    const oldContact = "2026-01-01T00:00:00.000Z";
+    const sql = new DatabaseSync(store.path);
+    sql.prepare("UPDATE policy SET last_seen=?").run(oldContact);
+    sql.close();
+
+    const refused = vi.fn<typeof requestJson>(
+      async (_url, _tls, _method, _body, _timeout, onResponse) => {
+        onResponse?.();
+        throw new ServiceError(
+          503,
+          "kernel_operation_failed",
+          "nft rejected rules",
+        );
+      },
+    );
+
+    await expect(deliverPolicy(store, config, refused)).rejects.toThrow(
+      "nft rejected rules",
+    );
+    expect(refused.mock.calls[0]![0].pathname).toBe(
+      operation === "health" ? "/v1/status" : "/v1/policy",
+    );
+    const repliedAt = store.status().lastSeen;
+
+    expect(repliedAt).not.toBeNull();
+    expect(repliedAt).not.toBe(oldContact);
+    expect(store.status()).toMatchObject({
+      pending: operation === "policy",
+      lastError: "nft rejected rules",
+    });
+
+    const unavailable = vi.fn<typeof requestJson>(async () => {
+      throw new Error("Gateway is down");
+    });
+
+    await expect(deliverPolicy(store, config, unavailable)).rejects.toThrow(
+      "Gateway is down",
+    );
+    expect(unavailable).toHaveBeenCalledTimes(1);
+    expect(store.status().lastError).toBe("Gateway is down");
+    expect(store.status().lastSeen).toBe(repliedAt);
+  },
+);
 
 // The browser process saves a newer revision while the machine process waits on the gateway; the
 // older delivery's outcome must leave the newer revision's requests applying.

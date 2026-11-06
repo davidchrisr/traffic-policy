@@ -143,6 +143,7 @@ export async function requestJson(
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- The JSON transport serializes endpoint payloads and hands raw responses to their validators.
   body?: unknown,
   timeoutMs = 10000,
+  onResponse?: () => void,
   // oxlint-disable-next-line anti-slop/no-unknown-returns -- The bounded JSON transport returns raw data for validation by its endpoint caller.
 ): Promise<unknown> {
   if (url.protocol !== "https:")
@@ -269,6 +270,13 @@ export async function requestJson(
             fail(new Error("Machine endpoint returned invalid JSON"));
           }
         });
+
+        // A verified peer has replied even when its status or body reports a failure.
+        try {
+          onResponse?.();
+        } catch (error) {
+          fail(error);
+        }
       },
     );
 

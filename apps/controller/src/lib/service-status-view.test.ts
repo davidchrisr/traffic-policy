@@ -4,7 +4,11 @@ import {
   type ServiceState,
   type ServicesSnapshot,
 } from "@traffic-policy/contracts/services";
-import { statusItems, worstTone } from "./service-status-view.ts";
+import {
+  statusItems,
+  worstTone,
+  type GatewaySync,
+} from "./service-status-view.ts";
 
 const checkedAt = "2026-10-25T00:00:00.000Z";
 
@@ -50,7 +54,11 @@ function snapshot(
   });
 }
 
-const applied = { pending: false, lastError: null, stale: false };
+const applied: GatewaySync = {
+  pending: false,
+  lastError: null,
+  contactAgeMs: 0,
+};
 
 describe("header status", () => {
   it("groups rules, the gateway with its link and enforcement service, and Suricata with its log rotation", () => {
@@ -106,12 +114,9 @@ describe("header status", () => {
       "Service status could not be refreshed.",
     ]);
     expect(
-      statusItems(
-        { pending: false, lastError: "failed", stale: false },
-        null,
-        false,
-        false,
-      ).map((item) => [item.tone, item.problems]),
+      statusItems({ ...applied, lastError: "failed" }, null, false, false).map(
+        (item) => [item.tone, item.problems],
+      ),
     ).toEqual([
       ["destructive", ["Rule changes: Not confirmed"]],
       ["muted", []],
@@ -124,19 +129,30 @@ describe("header status", () => {
       state: Partial<Omit<ServiceState, "id">> = {},
     ) => statusItems(sync, snapshot({}, state), false, false)[1]!;
 
-    expect(gateway({ ...applied, stale: true })).toMatchObject({
-      tone: "pending",
-      problems: ["Gateway contact: No contact in 15 seconds"],
-    });
+    expect(gateway({ ...applied, contactAgeMs: 15000 }).problems).toEqual([]);
+
+    for (const [contactAgeMs, message] of [
+      [15001, "No contact for 15s"],
+      [16000, "No contact for 16s"],
+      [61000, "No contact for 1m 1s"],
+      [3661000, "No contact for 1h 1m 1s"],
+      [null, "No contact yet"],
+    ] as const) {
+      expect(gateway({ ...applied, contactAgeMs })).toMatchObject({
+        tone: "destructive",
+        problems: [`Gateway contact: ${message}`],
+      });
+    }
+
     expect(
       gateway(
-        { ...applied, stale: true },
+        { ...applied, contactAgeMs: 16000 },
         { activeState: "failed", exitStatus: 1 },
       ),
     ).toMatchObject({
       tone: "destructive",
       problems: [
-        "Gateway contact: No contact in 15 seconds",
+        "Gateway contact: No contact for 16s",
         "Link process: Failed · exit 1",
       ],
     });

@@ -50,6 +50,8 @@ async function sendPolicy(
   config: Pick<ControllerConfig, "gatewayUrl" | "tls">,
   request: typeof requestJson,
 ) {
+  const onResponse = () => owner.seen();
+
   const send = async () =>
     owner.confirm(
       policy,
@@ -59,6 +61,8 @@ async function sendPolicy(
           config.tls,
           "PUT",
           policy,
+          undefined,
+          onResponse,
         ),
       ),
     );
@@ -69,7 +73,14 @@ async function sendPolicy(
 
     try {
       status = gatewayHealthSchema.parse(
-        await request(new URL("/v1/status", config.gatewayUrl), config.tls),
+        await request(
+          new URL("/v1/status", config.gatewayUrl),
+          config.tls,
+          "GET",
+          undefined,
+          undefined,
+          onResponse,
+        ),
       );
     } catch (error) {
       if (!(error instanceof ServiceError && RESEND_CODES.has(error.code)))
@@ -86,8 +97,6 @@ async function sendPolicy(
       owner.confirm(policy, status.receipt);
     else await send();
   }
-
-  owner.seen();
 }
 
 // Runs `work` unless a run is in flight. The run is registered before `work` starts, so work that

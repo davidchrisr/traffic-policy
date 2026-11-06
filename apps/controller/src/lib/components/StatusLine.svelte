@@ -73,8 +73,8 @@
     };
   });
 
-  const stale = $derived(
-    lastSeen === null || now - Date.parse(lastSeen) > 15000,
+  const contactAgeMs = $derived(
+    lastSeen === null ? null : Math.max(0, now - Date.parse(lastSeen)),
   );
 
   const servicesStale = $derived(
@@ -83,7 +83,7 @@
 
   const items = $derived(
     statusItems(
-      { pending, lastError, stale },
+      { pending, lastError, contactAgeMs },
       services,
       servicesStale,
       servicesFailed,

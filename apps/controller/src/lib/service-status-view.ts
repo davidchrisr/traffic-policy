@@ -21,7 +21,7 @@ export interface StatusItem {
 export interface GatewaySync {
   pending: boolean;
   lastError: string | null;
-  stale: boolean;
+  contactAgeMs: number | null;
 }
 
 interface Part {
@@ -96,6 +96,19 @@ export function worstTone(tones: StatusTone[]): StatusTone {
   );
 }
 
+function contactAge(ageMs: number): string {
+  const totalSeconds = Math.floor(ageMs / 1000);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+
+  if (totalSeconds >= 60) return `${minutes}m ${seconds}s`;
+
+  return `${seconds}s`;
+}
+
 function item(
   id: StatusItemId,
   label: string,
@@ -129,6 +142,8 @@ export function statusItems(
   servicesStale: boolean,
   servicesFailed: boolean,
 ): StatusItem[] {
+  const stale = sync.contactAgeMs === null || sync.contactAgeMs > 15000;
+
   const parts = (
     scope: "controller" | "gateway",
     ids: ListedServiceId[],
@@ -168,7 +183,7 @@ export function statusItems(
             ? { state: "Not confirmed", tone: "destructive" as const }
             : sync.pending
               ? { state: "Applying", tone: "pending" as const }
-              : sync.stale
+              : stale
                 ? { state: "Out of date", tone: "pending" as const }
                 : { state: "Applied", tone: "allow" as const }),
         },
@@ -182,8 +197,14 @@ export function statusItems(
       [
         {
           label: "Gateway contact",
-          ...(sync.stale
-            ? { state: "No contact in 15 seconds", tone: "pending" as const }
+          ...(stale
+            ? {
+                state:
+                  sync.contactAgeMs === null
+                    ? "No contact yet"
+                    : `No contact for ${contactAge(sync.contactAgeMs)}`,
+                tone: "destructive" as const,
+              }
             : { state: "Connected", tone: "allow" as const }),
         },
         ...parts("controller", ["machine"]),
