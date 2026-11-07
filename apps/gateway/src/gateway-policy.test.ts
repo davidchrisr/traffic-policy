@@ -136,7 +136,7 @@ async function fixture(
   persist: typeof atomicJson = atomicJson,
   removeIntent = clearIntent,
 ) {
-  const parent = join(process.cwd(), ".tmp/tests/gateway-policy");
+  const parent = join(process.cwd(), ".local/tmp/tests/gateway-policy");
   await mkdir(parent, { recursive: true });
   const directory = await mkdtemp(join(parent, "policy-"));
   roots.push(directory);

@@ -29,8 +29,8 @@ let directory = "";
 
 // The services open the store named by the controller config, as they do in the service.
 beforeAll(async () => {
-  mkdirSync(join(process.cwd(), ".tmp/tests"), { recursive: true });
-  directory = mkdtempSync(join(process.cwd(), ".tmp/tests/services-test-"));
+  mkdirSync(join(process.cwd(), ".local/tmp/tests"), { recursive: true });
+  directory = mkdtempSync(join(process.cwd(), ".local/tmp/tests/services-test-"));
 
   const database = join(directory, "controller.sqlite3");
   const config = join(directory, "controller.json");

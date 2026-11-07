@@ -20,7 +20,7 @@ afterEach(async () => {
 
 async function directory() {
   const path = await mkdtemp(
-    join(process.cwd(), ".tmp/tests/enforcement-owner-"),
+    join(process.cwd(), ".local/tmp/tests/enforcement-owner-"),
   );
 
   directories.push(path);

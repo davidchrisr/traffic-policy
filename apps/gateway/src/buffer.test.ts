@@ -1244,11 +1244,11 @@ async function fixture(
   }),
   persist: typeof atomicJson = atomicJson,
 ) {
-  await mkdir(join(process.cwd(), ".tmp/tests"), {
+  await mkdir(join(process.cwd(), ".local/tmp/tests"), {
     recursive: true,
   });
 
-  const root = await mkdtemp(join(process.cwd(), ".tmp/tests/buffer-test-"));
+  const root = await mkdtemp(join(process.cwd(), ".local/tmp/tests/buffer-test-"));
 
   roots.push(root);
 

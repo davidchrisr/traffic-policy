@@ -50,7 +50,7 @@ afterEach(() => {
 
 async function controller() {
   const directory = mkdtempSync(
-    join(process.cwd(), ".tmp/tests/machine-test-"),
+    join(process.cwd(), ".local/tmp/tests/machine-test-"),
   );
 
   directories.push(directory);

@@ -70,7 +70,7 @@ async function readerFixture(
   persist = atomicJson,
   getPolicy = () => policy,
 ) {
-  const root = await mkdtemp(join(process.cwd(), ".tmp/tests/eve-test-"));
+  const root = await mkdtemp(join(process.cwd(), ".local/tmp/tests/eve-test-"));
 
   roots.push(root);
 

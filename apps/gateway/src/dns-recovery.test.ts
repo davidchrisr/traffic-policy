@@ -72,11 +72,11 @@ async function fixture(
   persist: typeof atomicJson = atomicJson,
   value = policy(),
 ) {
-  await mkdir(join(process.cwd(), ".tmp/tests"), {
+  await mkdir(join(process.cwd(), ".local/tmp/tests"), {
     recursive: true,
   });
 
-  const directory = await mkdtemp(join(process.cwd(), ".tmp/tests/unit-"));
+  const directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/unit-"));
 
   directories.push(directory);
 
@@ -620,11 +620,11 @@ it("pins the resolution receipt to the policy that authorized a reassigned clien
 });
 
 it("waits for initialization without publishing a synthetic policy", async () => {
-  await mkdir(join(process.cwd(), ".tmp/tests"), {
+  await mkdir(join(process.cwd(), ".local/tmp/tests"), {
     recursive: true,
   });
 
-  const directory = await mkdtemp(join(process.cwd(), ".tmp/tests/unit-"));
+  const directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/unit-"));
 
   directories.push(directory);
 
@@ -1328,7 +1328,7 @@ it("bounds expanded DNS memory before allocating a multiplied permission set", (
 }, 15000);
 
 it("withholds an answer when a scheduled DNS Block takes effect during its install", async () => {
-  const directory = await mkdtemp(join(process.cwd(), ".tmp/tests/unit-"));
+  const directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/unit-"));
 
   directories.push(directory);
 

@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 it("counts unique allocated inodes and protects the recovery reserve", () => {
-  const root = mkdtempSync(join(process.cwd(), ".tmp/tests/storage-"));
+  const root = mkdtempSync(join(process.cwd(), ".local/tmp/tests/storage-"));
 
   roots.push(root);
   writeFileSync(join(root, "data"), randomBytes(8192));

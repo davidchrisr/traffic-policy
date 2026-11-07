@@ -249,7 +249,7 @@ it("rejects duplicate ownership before opening the policy enforcer", async () =>
 
 it("releases ownership and signal handlers after failed enforcement startup", async () => {
   const directory = await mkdtemp(
-    join(process.cwd(), ".tmp/tests/enforcement-startup-"),
+    join(process.cwd(), ".local/tmp/tests/enforcement-startup-"),
   );
 
   const listeners = process.listeners("SIGTERM");
@@ -289,7 +289,7 @@ it("cancels recovery at SIGTERM while draining an admitted enforcement command a
       "./enforcement-client.ts",
     );
 
-  const base = join(process.cwd(), ".tmp/tests/enforcement-lifecycle");
+  const base = join(process.cwd(), ".local/tmp/tests/enforcement-lifecycle");
   await mkdir(base, { recursive: true });
   const directory = await mkdtemp(join(base, "shutdown-"));
   const socketPath = join(directory, "enforcement.sock");

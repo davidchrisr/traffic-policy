@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const scratch = join(process.cwd(), ".tmp/tests/collector-worker");
+  const scratch = join(process.cwd(), ".local/tmp/tests/collector-worker");
   await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(join(scratch, "case-"));
   roots.push(root);

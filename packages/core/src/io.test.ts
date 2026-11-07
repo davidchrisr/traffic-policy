@@ -35,7 +35,7 @@ afterEach(async () => {
 });
 
 it("removes its temporary write when the destination rename fails", async () => {
-  const root = await mkdtemp(join(process.cwd(), ".tmp/tests/io-test-"));
+  const root = await mkdtemp(join(process.cwd(), ".local/tmp/tests/io-test-"));
 
   roots.push(root);
   const path = join(root, "destination");

@@ -47,7 +47,7 @@ async function fixture(
     admissionFailure?: boolean;
   } = {},
 ) {
-  const base = join(process.cwd(), ".tmp/tests/dns-logging");
+  const base = join(process.cwd(), ".local/tmp/tests/dns-logging");
   await mkdir(base, { recursive: true });
   const directory = await mkdtemp(join(base, "fixture-"));
   const path = join(directory, "enforcement.sock");

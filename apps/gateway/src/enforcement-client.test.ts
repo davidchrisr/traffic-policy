@@ -22,7 +22,7 @@ import {
 async function fixture(
   reply: (socket: Socket, id: string, command: EnforcementCommand) => void,
 ) {
-  const base = join(process.cwd(), ".tmp/tests/enforcement-client");
+  const base = join(process.cwd(), ".local/tmp/tests/enforcement-client");
   await mkdir(base, { recursive: true });
 
   const directory = await mkdtemp(join(base, "transport-")),

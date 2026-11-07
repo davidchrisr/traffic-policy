@@ -10,7 +10,6 @@ export default defineConfig([
       "**/build/**",
       "dist/**",
       ".local/**",
-      ".tmp/**",
       "tools/oxlint/anti-slop/**",
     ],
   },

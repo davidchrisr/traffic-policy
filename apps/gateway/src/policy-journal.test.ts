@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 it("distinguishes missing checkpoints from malformed and schema-invalid saved state", async () => {
-  const directory = await mkdtemp(join(process.cwd(), ".tmp/tests/journal-"));
+  const directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/journal-"));
 
   directories.push(directory);
 
@@ -34,7 +34,7 @@ it("distinguishes missing checkpoints from malformed and schema-invalid saved st
 });
 
 it("repeats durable removal after a partial unlink failure without adopting missing state", async () => {
-  const directory = await mkdtemp(join(process.cwd(), ".tmp/tests/journal-"));
+  const directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/journal-"));
 
   directories.push(directory);
 

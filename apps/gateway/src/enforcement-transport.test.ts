@@ -45,7 +45,7 @@ function deferred() {
 }
 
 async function fixture(dispatch: EnforcementDispatch) {
-  const base = join(process.cwd(), ".tmp/tests/enforcement-transport");
+  const base = join(process.cwd(), ".local/tmp/tests/enforcement-transport");
   await mkdir(base, { recursive: true });
 
   const directory = await mkdtemp(join(base, "transport-")),

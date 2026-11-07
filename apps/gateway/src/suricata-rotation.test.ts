@@ -25,7 +25,7 @@ afterEach(() => {
 
 function suricataDirectory() {
   const directory = mkdtempSync(
-    join(process.cwd(), ".tmp/tests/suricata-rotation-"),
+    join(process.cwd(), ".local/tmp/tests/suricata-rotation-"),
   );
 
   directories.push(directory);

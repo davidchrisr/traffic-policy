@@ -10,7 +10,7 @@ rm -f -- /work/.built
 
 # Ownership is not copied, so the build needs no CAP_CHOWN.
 rsync -rlpt --delete \
-  --exclude=node_modules --exclude=.git --exclude=.tmp --exclude=.local \
+  --exclude=node_modules --exclude=.git --exclude=.local \
   --exclude=/dist --exclude=/apps/controller/build --exclude=.svelte-kit \
   /src/ /work/
 
