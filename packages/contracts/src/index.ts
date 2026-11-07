@@ -226,6 +226,89 @@ export const instanceSchema = z
     "Instance addresses must be unique",
   );
 
+// A rule lists at most this many ports and port ranges.
+export const MAX_RULE_PORTS = 64;
+
+export type PortRange = { start: number; end: number };
+
+const portNumberSchema = z.number().int().min(1).max(65535);
+
+// Port ranges in canonical form: sorted, each start at most its end, and no two overlapping or
+// adjacent, so equal port sets compare equal.
+export const portsSchema = z
+  .array(z.object({ start: portNumberSchema, end: portNumberSchema }).strict())
+  .min(1)
+  .max(MAX_RULE_PORTS)
+  .refine(
+    (ranges) =>
+      ranges.every(
+        (range, index) =>
+          range.start <= range.end &&
+          (index === 0 || ranges[index - 1]!.end + 1 < range.start),
+      ),
+    "Port ranges must be sorted, not reversed, and neither overlapping nor adjacent",
+  );
+
+function portNumber(digits: string): number {
+  const port = Number(digits);
+
+  if (port < 1 || port > 65535)
+    throw new Error(`Port ${digits} is outside 1–65535`);
+
+  return port;
+}
+
+// Ports typed as comma-separated ports and inclusive ranges, such as "443-1000, 321", in canonical
+// form; null when blank, meaning any port. Overlapping and adjacent entries merge.
+export function parsePorts(text: string): PortRange[] | null {
+  if (text.trim() === "") return null;
+
+  const ranges = text.split(",").map((entry) => {
+    const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(entry.trim());
+
+    if (!match)
+      throw new Error(
+        entry.trim() === ""
+          ? "Remove the empty entry between commas"
+          : `"${entry.trim()}" is not a port or a port range`,
+      );
+
+    const start = portNumber(match[1]!);
+    const end = match[2] === undefined ? start : portNumber(match[2]);
+
+    if (start > end)
+      throw new Error(
+        `Range ${start}-${end} is reversed; write it as ${end}-${start}`,
+      );
+
+    return { start, end };
+  });
+
+  const merged: PortRange[] = [];
+
+  for (const range of ranges.sort((a, b) => a.start - b.start)) {
+    const last = merged.at(-1);
+
+    if (last && range.start <= last.end + 1)
+      last.end = Math.max(last.end, range.end);
+    else merged.push({ ...range });
+  }
+
+  if (merged.length > MAX_RULE_PORTS)
+    throw new Error(`Enter at most ${MAX_RULE_PORTS} ports or port ranges`);
+
+  return merged;
+}
+
+// Port ranges as parsePorts reads them, such as "321, 443-1000".
+export function formatPorts(ranges: PortRange[], dash = "-"): string {
+  return ranges
+    .map(({ start, end }) =>
+      start === end ? `${start}` : `${start}${dash}${end}`,
+    )
+    .join(", ");
+}
+
 const ruleObject = z
   .object({
     id: z.string().uuid(),
@@ -233,8 +316,7 @@ const ruleObject = z
     direction: z.enum(["outgoing", "incoming", "both"]),
     peer: peerSchema,
     protocol: z.number().int().min(0).max(255).nullable(),
-    portStart: z.number().int().min(0).max(65535).nullable(),
-    portEnd: z.number().int().min(0).max(65535).nullable(),
+    ports: portsSchema.nullable(),
     icmpType: z.number().int().min(0).max(255).nullable(),
     icmpCode: z.number().int().min(0).max(255).nullable(),
     action: z.enum(["allow", "block"]),
@@ -270,16 +352,7 @@ export const ruleSchema = ruleObject.superRefine((rule, context) => {
     );
 
   if (
-    (rule.portStart === null) !== (rule.portEnd === null) ||
-    (rule.portStart !== null &&
-      rule.portEnd !== null &&
-      rule.portStart > rule.portEnd)
-  ) {
-    fail("Port range is incomplete or reversed", "portEnd");
-  }
-
-  if (
-    rule.portStart !== null &&
+    rule.ports !== null &&
     rule.protocol !== null &&
     ![6, 17].includes(rule.protocol)
   ) {
@@ -435,7 +508,7 @@ export const policySchema = z
             rule.subject.kind === "global" &&
             rule.peer.kind === "any" &&
             rule.protocol === null &&
-            rule.portStart === null &&
+            rule.ports === null &&
             rule.icmpType === null &&
             rule.enabled &&
             rule.notBefore === null &&

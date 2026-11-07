@@ -1,6 +1,7 @@
 import ipaddr from "ipaddr.js";
 import {
   ScopeTree,
+  formatPorts,
   integerAddress,
   subjectScope,
   type Permission,
@@ -173,8 +174,7 @@ export function connectionMarkScope(rule: Rule, path: string): string {
     peer: rule.peer,
     dnsDestinations: rule.dnsDestinations,
     protocol: rule.protocol,
-    portStart: rule.portStart,
-    portEnd: rule.portEnd,
+    ports: rule.ports,
     icmpType: rule.icmpType,
     icmpCode: rule.icmpCode,
   })}`;
@@ -319,12 +319,15 @@ function ruleExpression(
   }
 
   if (rule.protocol !== null) expression.push(`ct protocol ${rule.protocol}`);
-  else if (rule.portStart !== null) expression.push("ct protocol { 6, 17 }");
+  else if (rule.ports !== null) expression.push("ct protocol { 6, 17 }");
 
-  if (rule.portStart !== null)
+  if (rule.ports !== null) {
+    const ports = formatPorts(rule.ports);
+
     expression.push(
-      `${port} ${rule.portStart}${rule.portEnd === rule.portStart ? "" : `-${rule.portEnd}`}`,
+      `${port} ${rule.ports.length === 1 ? ports : `{ ${ports} }`}`,
     );
+  }
 
   if (rule.icmpType !== null)
     expression.push(`ct original proto-dst & 0xff00 ${rule.icmpType * 256}`);

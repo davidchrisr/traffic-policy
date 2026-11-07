@@ -6,6 +6,7 @@ import {
   addressInteger,
   flowSchema,
   nameSchema,
+  parsePorts,
   policySchema,
   policyTransportSchema,
   MAX_POLICY_BYTES,
@@ -28,6 +29,7 @@ import {
   ruleState,
   scopeTree,
   serviceLabel,
+  serviceRangesLabel,
   subjectContext,
 } from "./index.ts";
 import {
@@ -107,8 +109,7 @@ function rule(
     direction: "both",
     peer: { kind: "any" },
     protocol: null,
-    portStart: null,
-    portEnd: null,
+    ports: null,
     icmpType: null,
     icmpCode: null,
     action: "block",
@@ -205,7 +206,7 @@ describe("Settings catch-all", () => {
 
 describe("DNS denial attribution", () => {
   it("leaves questions unresolved when no unrestricted Block or Allow applies", () => {
-    const ssh = rule({ protocol: 6, portStart: 22, portEnd: 22 });
+    const ssh = rule({ protocol: 6, ports: [{ start: 22, end: 22 }] });
     const echo = rule({ protocol: 1, icmpType: 8 });
 
     for (const rules of [[], [ssh], [echo, ssh]])
@@ -233,8 +234,7 @@ describe("DNS denial attribution", () => {
     const ssh = rule({
       priority: "high",
       protocol: 6,
-      portStart: 22,
-      portEnd: 22,
+      ports: [{ start: 22, end: 22 }],
     });
 
     for (const rules of [
@@ -267,8 +267,7 @@ describe("DNS denial attribution", () => {
       direction: "outgoing",
       peer: { kind: "hostname", value: "api.example.com" },
       protocol: 6,
-      portStart: 443,
-      portEnd: 443,
+      ports: [{ start: 443, end: 443 }],
     });
 
     const expected = { allowed: false, ruleId: block.id, catchAll: false };
@@ -326,8 +325,7 @@ describe("DNS denial attribution", () => {
       direction: "outgoing",
       peer: { kind: "hostname", value: "api.example.com" },
       protocol: 6,
-      portStart: 443,
-      portEnd: 443,
+      ports: [{ start: 443, end: 443 }],
       notBefore: new Date(start).toISOString(),
       expiresAt: new Date(end).toISOString(),
     });
@@ -385,8 +383,7 @@ describe("overridden rules", () => {
       instanceId: clientId,
       direction: "outgoing",
       peer: { kind: "ip", value: "10.22.242.20" },
-      portStart: 18081,
-      portEnd: 18081,
+      ports: [{ start: 18081, end: 18081 }],
       ...partial,
     });
 
@@ -408,7 +405,7 @@ describe("overridden rules", () => {
     const allow = target({ action: "allow" });
 
     for (const other of [
-      target({ portStart: null, portEnd: null, protocol: null }),
+      target({ ports: null, protocol: null }),
       target({ peer: { kind: "cidr", value: "10.22.242.0/24" } }),
       rule({ peer: { kind: "cidr", value: "10.22.242.0/24" } }),
     ])
@@ -445,6 +442,35 @@ describe("overridden rules", () => {
         now,
       )?.rule.priority,
     ).toBe("high");
+  });
+
+  it("covers a port list only with ranges that contain each of its ranges", () => {
+    const allow = target({
+      action: "allow",
+      ports: [
+        { start: 443, end: 443 },
+        { start: 8080, end: 8080 },
+      ],
+    });
+
+    const block = (ports: Rule["ports"]) => target({ priority: "high", ports });
+
+    expect(
+      overriddenBy(
+        allow,
+        [
+          block([
+            { start: 1, end: 1000 },
+            { start: 8000, end: 9000 },
+          ]),
+        ],
+        instances,
+        now,
+      ),
+    ).not.toBeNull();
+    expect(
+      overriddenBy(allow, [block([{ start: 1, end: 1000 }])], instances, now),
+    ).toBeNull();
   });
 
   it("reports High priority covering rules and when a temporary winner ends", () => {
@@ -493,8 +519,7 @@ describe("overridden rules", () => {
     const hostname = target({
       action: "allow",
       peer: { kind: "hostname", value: "api.example.com" },
-      portStart: null,
-      portEnd: null,
+      ports: null,
     });
 
     expect(
@@ -503,8 +528,7 @@ describe("overridden rules", () => {
         [
           target({
             peer: { kind: "domain", value: "example.com" },
-            portStart: null,
-            portEnd: null,
+            ports: null,
             priority: "high",
           }),
         ],
@@ -595,26 +619,29 @@ describe("policy semantics", () => {
 
     const narrow = rule({
       protocol: 6,
-      portStart: 443,
-      portEnd: 443,
+      ports: [{ start: 443, end: 443 }],
       action: "allow",
     });
 
-    const broad = rule({ protocol: 6, portStart: 1, portEnd: 65535 });
+    const broad = rule({ protocol: 6, ports: [{ start: 1, end: 65535 }] });
     expect(compareRules(narrow, broad)).toBeLessThan(0);
   });
   it("labels a port without a protocol as TCP or UDP and any traffic as any", () => {
     expect(serviceLabel(null, null)).toBe("any");
     expect(serviceLabel(null, 18081)).toBe("TCP/UDP:18081");
     expect(serviceLabel(6, null)).toBe("TCP");
-    expect(serviceLabel(6, 8000, 8100)).toBe("TCP:8000–8100");
+    expect(
+      serviceRangesLabel(6, [
+        { start: 321, end: 321 },
+        { start: 8000, end: 8100 },
+      ]),
+    ).toBe("TCP:321, 8000–8100");
     expect(serviceLabel(47, null)).toBe("Protocol 47");
     expect(
       ruleScopeLabel(
         rule({
           peer: { kind: "ip", value: "10.22.242.20" },
-          portStart: 18081,
-          portEnd: 18081,
+          ports: [{ start: 18081, end: 18081 }],
         }),
       ),
     ).toBe("10.22.242.20 · TCP/UDP:18081");
@@ -634,8 +661,7 @@ describe("policy semantics", () => {
       direction: "outgoing",
       peer: { kind: "hostname", value: "proof.example" },
       protocol: 6,
-      portStart: 18080,
-      portEnd: 18081,
+      ports: [{ start: 18080, end: 18081 }],
     });
 
     const traffic = {
@@ -848,8 +874,7 @@ describe("policy semantics", () => {
       action: "allow",
       peer: { kind: "ip", value: "10.22.242.99" },
       protocol: 6,
-      portStart: 10443,
-      portEnd: 10443,
+      ports: [{ start: 10443, end: 10443 }],
     });
 
     const incoming = rule({
@@ -857,8 +882,7 @@ describe("policy semantics", () => {
       direction: "incoming",
       action: "allow",
       protocol: 6,
-      portStart: 443,
-      portEnd: 443,
+      ports: [{ start: 443, end: 443 }],
     });
 
     const translated = {
@@ -898,8 +922,58 @@ describe("policy semantics", () => {
       chainBody(program, `i4_${nodeName(value, "10.22.242.20")}`),
     ).toContain("ct protocol 6 ct reply proto-src 443");
   });
+  it("matches and compiles a rule's port list as one set", () => {
+    const listed = rule({
+      instanceId: clientId,
+      direction: "outgoing",
+      action: "allow",
+      protocol: 6,
+      ports: [
+        { start: 321, end: 321 },
+        { start: 443, end: 1000 },
+      ],
+    });
+
+    for (const [port, matched] of [
+      [320, false],
+      [321, true],
+      [322, false],
+      [443, true],
+      [1000, true],
+      [1001, false],
+    ] as const)
+      expect(
+        ruleMatches(
+          listed,
+          clientContext,
+          "outgoing",
+          { ...flow, originalServicePort: port },
+          [],
+          now,
+        ),
+      ).toBe(matched);
+
+    const value = policy([listed]);
+
+    const program = compileNftables(value, [], {
+      marks: marksFor(value),
+      tableExists: false,
+      dnsPort: 5353,
+      infrastructure,
+      now,
+      policyHash: "a".repeat(64),
+    });
+
+    expect(
+      chainBody(program, `o4_${nodeName(value, "10.22.241.10")}`),
+    ).toContain("ct protocol 6 ct original proto-dst { 321, 443-1000 }");
+  });
   it("counts each Block rule's drops in one named counter per instance and direction", () => {
-    const blocked = rule({ protocol: 17, portStart: 18099, portEnd: 18099 });
+    const blocked = rule({
+      protocol: 17,
+      ports: [{ start: 18099, end: 18099 }],
+    });
+
     const value = policy([blocked]);
 
     value.instances[0]!.addresses.push("fd42::10");
@@ -1153,6 +1227,51 @@ describe("native compilation and contracts", () => {
     for (const name of chains.keys())
       if (/^[oi][46]_/.test(name)) expect(depth(name)).toBeLessThanOrEqual(5);
   });
+  it("reads typed ports into sorted, merged ranges", () => {
+    expect(parsePorts(" ")).toBeNull();
+    expect(parsePorts("443")).toEqual([{ start: 443, end: 443 }]);
+    expect(parsePorts(" 443-1000 , 321,6534 ")).toEqual([
+      { start: 321, end: 321 },
+      { start: 443, end: 1000 },
+      { start: 6534, end: 6534 },
+    ]);
+    // Overlapping, adjacent, and repeated entries merge.
+    expect(parsePorts("80-90, 85-100, 101, 101, 1-65535")).toEqual([
+      { start: 1, end: 65535 },
+    ]);
+  });
+  it("refuses malformed, reversed, out-of-range, and too many ports", () => {
+    for (const [text, message] of [
+      ["https", '"https" is not a port or a port range'],
+      ["443-", '"443-" is not a port or a port range'],
+      ["443,,80", "Remove the empty entry between commas"],
+      ["443,", "Remove the empty entry between commas"],
+      ["1000-443", "Range 1000-443 is reversed; write it as 443-1000"],
+      ["0", "Port 0 is outside 1–65535"],
+      ["443-65536", "Port 65536 is outside 1–65535"],
+      [
+        Array.from({ length: 65 }, (_, index) => index * 2 + 1).join(","),
+        "Enter at most 64 ports or port ranges",
+      ],
+    ])
+      expect(() => parsePorts(text!)).toThrow(message);
+  });
+  it("accepts only canonical port lists in rules", () => {
+    for (const ports of [
+      [{ start: 443, end: 80 }],
+      [
+        { start: 443, end: 443 },
+        { start: 80, end: 80 },
+      ],
+      [
+        { start: 80, end: 90 },
+        { start: 91, end: 100 },
+      ],
+      [{ start: 0, end: 80 }],
+      [],
+    ])
+      expect(() => rule({ protocol: 6, ports })).toThrow();
+  });
   it("keeps endpoint checks and ordered DNS calls while DNS transactions avoid static policy replacement", () => {
     const dns = rule({
       instanceId: clientId,
@@ -1212,8 +1331,7 @@ describe("native compilation and contracts", () => {
       direction: "outgoing",
       peer: { kind: "hostname", value: "app.example" },
       protocol: 6,
-      portStart: 443,
-      portEnd: 443,
+      ports: [{ start: 443, end: 443 }],
       action: "allow",
       notBefore: timestamp,
       expiresAt: "2026-10-11T00:00:00.000Z",
@@ -1289,7 +1407,7 @@ describe("native compilation and contracts", () => {
     // A new peer or service is a new scope, so it gets a new mark.
     expect(
       connectionMarkScope(
-        { ...allowed, portStart: 8443, portEnd: 8443 },
+        { ...allowed, ports: [{ start: 8443, end: 8443 }] },
         clientId,
       ),
     ).not.toBe(connectionMarkScope(allowed, clientId));

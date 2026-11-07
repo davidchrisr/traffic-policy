@@ -41,9 +41,13 @@ restrict origins to loopback or private IPv4 addresses. Deployment uses HTTPS.
 Rules, instances, and settings mutations require `expectedRevision`. A stale
 revision returns 409. Rule input excludes server-owned identity and
 creation/modification times. Unknown fields and invalid combinations return 400
-with field issues. Accepted mutations return 202 and remain pending until the
-gateway confirms the new policy hash. Responses include the new revision except
-for instance removal, which returns `{ "accepted": true }`.
+with field issues. A rule's `ports` is `null` for any port, or up to 64
+`{ start, end }` ranges within 1–65535, sorted, each start at most its end, and
+no two overlapping or adjacent. Ports require TCP, UDP, or any transport; with
+any transport they match TCP and UDP only. Accepted mutations return 202 and
+remain pending until the gateway confirms the new policy hash. Responses include
+the new revision except for instance removal, which returns
+`{ "accepted": true }`.
 
 Removing an instance also removes its scoped rules and pending request rows;
 retained history remains available.

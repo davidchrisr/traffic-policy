@@ -119,8 +119,7 @@ function policy(): Policy {
     direction: "both",
     peer: { kind: "any" },
     protocol: null,
-    portStart: null,
-    portEnd: null,
+    ports: null,
     icmpType: null,
     icmpCode: null,
     action: "block",
@@ -446,8 +445,7 @@ it("reindexes learned answers on rule expansion and deletion without publishing 
     id: randomUUID(),
     action: "allow",
     protocol: 6,
-    portStart: 443,
-    portEnd: 443,
+    ports: [{ start: 443, end: 443 }],
   });
   const f = await fixture(undefined, value);
   await f.resolve();

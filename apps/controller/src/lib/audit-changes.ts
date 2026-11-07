@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   peerSchema,
+  portsSchema,
   ruleSchema,
   subjectSchema,
   type Instance,
@@ -10,7 +11,7 @@ import type { AuditChange } from "@traffic-policy/contracts/dashboard";
 import {
   describeRule,
   directionLabels,
-  serviceLabel,
+  serviceRangesLabel,
   subjectLabel,
 } from "@traffic-policy/core";
 import { formatByteSize } from "./byte-size.ts";
@@ -108,7 +109,7 @@ function service(fields: Fields): string {
   const icmpType = port.parse(fields.icmpType);
   const icmpCode = port.parse(fields.icmpCode);
 
-  return `${serviceLabel(port.parse(fields.protocol), port.parse(fields.portStart), port.parse(fields.portEnd))}${icmpType === null ? "" : ` type ${icmpType}`}${icmpCode === null ? "" : ` code ${icmpCode}`}`;
+  return `${serviceRangesLabel(port.parse(fields.protocol), portsSchema.nullable().parse(fields.ports))}${icmpType === null ? "" : ` type ${icmpType}`}${icmpCode === null ? "" : ` code ${icmpCode}`}`;
 }
 
 const instanceFields = {

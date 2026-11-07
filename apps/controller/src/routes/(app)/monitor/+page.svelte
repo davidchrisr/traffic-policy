@@ -235,8 +235,10 @@
       direction: namedPeer ? "outgoing" : (service?.direction ?? direction),
       peer: namedPeer ?? peerOf(service?.peerIp ?? peerIp),
       protocol: service?.protocol ?? null,
-      portStart: service?.port ?? null,
-      portEnd: service?.port ?? null,
+      ports:
+        service?.port === undefined || service.port === null
+          ? null
+          : [{ start: service.port, end: service.port }],
       icmpType: null,
       icmpCode: null,
       enabled: true,

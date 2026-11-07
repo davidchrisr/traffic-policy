@@ -4,13 +4,7 @@ import type { AuditChange } from "@traffic-policy/contracts/dashboard";
 type Fields = NonNullable<AuditChange["after"]>;
 
 // Service fields are shown as one value, so an update keeps all of them.
-const SERVICE_FIELDS = [
-  "protocol",
-  "portStart",
-  "portEnd",
-  "icmpType",
-  "icmpCode",
-];
+const SERVICE_FIELDS = ["protocol", "ports", "icmpType", "icmpCode"];
 
 // Bookkeeping that changes with every save.
 const RULE_BOOKKEEPING = new Set(["id", "createdAt", "modifiedAt"]);

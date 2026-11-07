@@ -9,7 +9,11 @@
   } from "@lucide/svelte";
   import type { Instance, Rule } from "@traffic-policy/contracts";
   import type { RuleDraft } from "@traffic-policy/contracts/dashboard";
-  import { ruleInputSchema } from "@traffic-policy/contracts";
+  import {
+    formatPorts,
+    parsePorts,
+    ruleInputSchema,
+  } from "@traffic-policy/contracts";
   import { api, ApiError } from "#lib/client.ts";
   import * as Dialog from "#lib/components/ui/dialog/index.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
@@ -54,8 +58,7 @@
     peerKind: "any",
     peerValue: "",
     protocol: "any",
-    portStart: "",
-    portEnd: "",
+    ports: "",
     icmpType: "",
     icmpCode: "",
     priority: "normal",
@@ -79,6 +82,17 @@
   let fieldErrors = $state<{ path: string; message: string }[]>([]);
 
   const dirty = $derived(initial !== JSON.stringify(fields));
+
+  // Why the typed ports are not a port list, shown under the field as they are typed.
+  const portsError = $derived.by(() => {
+    try {
+      parsePorts(fields.ports);
+
+      return "";
+    } catch (failure) {
+      return failure instanceof Error ? failure.message : "Enter valid ports";
+    }
+  });
 
   function localTime(raw: string | null | undefined): string {
     if (!raw) return "";
@@ -118,18 +132,14 @@
         value.peer && "value" in value.peer ? value.peer.value : "";
       next.protocol =
         value.protocol === undefined || value.protocol === null
-          ? value.portStart === undefined || value.portStart === null
+          ? value.ports === undefined || value.ports === null
             ? "any"
             : "tcpudp"
           : String(value.protocol);
-      next.portStart =
-        value.portStart === undefined || value.portStart === null
+      next.ports =
+        value.ports === undefined || value.ports === null
           ? ""
-          : String(value.portStart);
-      next.portEnd =
-        value.portEnd === undefined || value.portEnd === null
-          ? ""
-          : String(value.portEnd);
+          : formatPorts(value.ports);
       next.icmpType =
         value.icmpType === undefined || value.icmpType === null
           ? ""
@@ -176,8 +186,10 @@
       // A port without a protocol matches TCP and UDP only; other protocols have no ports.
       const ported = ["6", "17", "tcpudp"].includes(fields.protocol);
 
-      if (fields.protocol === "tcpudp" && fields.portStart === "")
-        throw new Error("Enter a service port for TCP/UDP");
+      const ports = ported ? parsePorts(fields.ports) : null;
+
+      if (fields.protocol === "tcpudp" && ports === null)
+        throw new Error("Enter ports for TCP/UDP");
 
       const value = ruleInputSchema.parse({
         subject:
@@ -195,14 +207,7 @@
         protocol: ["any", "tcpudp"].includes(fields.protocol)
           ? null
           : Number(fields.protocol),
-        portStart:
-          !ported || fields.portStart === "" ? null : Number(fields.portStart),
-        portEnd:
-          !ported || fields.portStart === ""
-            ? null
-            : fields.portEnd === ""
-              ? Number(fields.portStart)
-              : Number(fields.portEnd),
+        ports,
         icmpType:
           !["1", "58"].includes(fields.protocol) || fields.icmpType === ""
             ? null
@@ -483,24 +488,22 @@
           />
         </div>
         {#if ["6", "17", "tcpudp"].includes(fields.protocol)}<div
-            class="field-group"
+            class="field-group sm:col-span-2"
           >
-            <Label for="rule-port">Service port</Label><Input
-              id="rule-port"
-              inputmode="numeric"
-              pattern="[0-9]*"
-              bind:value={fields.portStart}
+            <Label for="rule-ports">Ports</Label><Input
+              id="rule-ports"
+              bind:value={fields.ports}
               placeholder="Any"
+              aria-invalid={portsError ? "true" : undefined}
+              aria-describedby="rule-ports-help"
             />
-          </div>
-          <div class="field-group">
-            <Label for="rule-port-end">Through</Label><Input
-              id="rule-port-end"
-              inputmode="numeric"
-              pattern="[0-9]*"
-              bind:value={fields.portEnd}
-              placeholder="Same port"
-            />
+            <p
+              id="rule-ports-help"
+              class={portsError ? "field-error" : "muted text-xs"}
+            >
+              {portsError ||
+                "Ports and ranges, separated by commas, such as 443 or 443-1000, 8080."}
+            </p>
           </div>{/if}
       </div>
       {#if fields.protocol === "1" || fields.protocol === "58"}<div

@@ -47,8 +47,7 @@ function rule(
     direction: "outgoing",
     peer: { kind: "domain", value: "example.com" },
     protocol: null,
-    portStart: null,
-    portEnd: null,
+    ports: null,
     icmpType: null,
     icmpCode: null,
     action: "allow",
@@ -148,7 +147,11 @@ function reference(value: Policy, answer: AddressLease): Rule[] {
 describe("DNS admission", () => {
   it("keeps an unresolved question in review when only one service has an explicit Block", () => {
     const value = policy([
-      rule(1, { action: "block", protocol: 6, portStart: 22, portEnd: 22 }),
+      rule(1, {
+        action: "block",
+        protocol: 6,
+        ports: [{ start: 22, end: 22 }],
+      }),
     ]);
 
     expect(decideDns(value.rules, clientContext, "example.com", now)).toEqual({
@@ -211,8 +214,7 @@ describe("DNS admission", () => {
       action: "block",
       priority: "high",
       protocol: 6,
-      portStart: 22,
-      portEnd: 22,
+      ports: [{ start: 22, end: 22 }],
     });
 
     const catchAll = rule(2, {
@@ -238,14 +240,13 @@ describe("DNS admission", () => {
     ).toEqual({ allowed: false, ruleId: catchAll.id, catchAll: true });
 
     // A Block covering every service the Allow names decides on its own.
-    const https = rule(4, { protocol: 6, portStart: 443, portEnd: 443 });
+    const https = rule(4, { protocol: 6, ports: [{ start: 443, end: 443 }] });
 
     const httpsBlock = rule(5, {
       action: "block",
       priority: "high",
       protocol: 6,
-      portStart: 443,
-      portEnd: 443,
+      ports: [{ start: 443, end: 443 }],
     });
 
     expect(
@@ -263,8 +264,7 @@ describe("DNS admission", () => {
       peer: { kind: "any" },
       dnsDestinations: null,
       protocol: 6,
-      portStart: 443,
-      portEnd: 443,
+      ports: [{ start: 443, end: 443 }],
     });
 
     for (const name of ["example.com", "unknown.test", "."])
@@ -278,8 +278,7 @@ describe("DNS admission", () => {
     const block = rule(1, {
       action: "block",
       protocol: 6,
-      portStart: 22,
-      portEnd: 22,
+      ports: [{ start: 22, end: 22 }],
     });
 
     expect(
@@ -287,7 +286,7 @@ describe("DNS admission", () => {
     ).toBe(true);
     expect(
       decideDns(
-        [block, rule(2, { protocol: 6, portStart: 443, portEnd: 443 })],
+        [block, rule(2, { protocol: 6, ports: [{ start: 443, end: 443 }] })],
         clientContext,
         "example.com",
         now,
@@ -295,7 +294,7 @@ describe("DNS admission", () => {
     ).toBe(true);
     expect(
       decideDns(
-        [block, rule(2, { protocol: 6, portStart: 22, portEnd: 22 })],
+        [block, rule(2, { protocol: 6, ports: [{ start: 22, end: 22 }] })],
         clientContext,
         "example.com",
         now,
@@ -303,21 +302,44 @@ describe("DNS admission", () => {
     ).toBe(false);
   });
 
+  it("leaves an Allow the ports a Block's port list skips", () => {
+    const allow = rule(1, { protocol: 6, ports: [{ start: 1, end: 65535 }] });
+
+    const skipping = rule(2, {
+      action: "block",
+      protocol: 6,
+      ports: [
+        { start: 1, end: 442 },
+        { start: 444, end: 65535 },
+      ],
+    });
+
+    const https = rule(3, {
+      action: "block",
+      protocol: 6,
+      ports: [{ start: 443, end: 443 }],
+    });
+
+    const allowed = (rules: Rule[]) =>
+      decideDns(rules, clientContext, "example.com", now).allowed;
+
+    expect(allowed([allow, skipping])).toBe(true);
+    expect(allowed([allow, skipping, https])).toBe(false);
+  });
+
   it("combines higher-ranked service Blocks, preserving uncovered endpoints", () => {
-    const allow = rule(1, { protocol: 6, portStart: 0, portEnd: 65535 });
+    const allow = rule(1, { protocol: 6, ports: [{ start: 1, end: 65535 }] });
 
     const low = rule(2, {
       action: "block",
       protocol: 6,
-      portStart: 0,
-      portEnd: 31,
+      ports: [{ start: 1, end: 31 }],
     });
 
     const high = rule(3, {
       action: "block",
       protocol: 6,
-      portStart: 32,
-      portEnd: 65535,
+      ports: [{ start: 32, end: 65535 }],
     });
 
     expect(
@@ -330,7 +352,7 @@ describe("DNS admission", () => {
     ])
       expect(
         decideDns(
-          [allow, low, { ...high, portStart: start!, portEnd: end! }],
+          [allow, low, { ...high, ports: [{ start: start!, end: end! }] }],
           clientContext,
           "example.com",
           now,
@@ -638,8 +660,7 @@ describe("indexed DNS rule matching", () => {
           priority: n % 11 === 0 ? "high" : "normal",
           enabled: n % 13 !== 0,
           protocol: n % 5 === 0 ? 6 : n % 5 === 1 ? 17 : null,
-          portStart: n % 5 === 0 ? 443 : null,
-          portEnd: n % 5 === 0 ? 443 : null,
+          ports: n % 5 === 0 ? [{ start: 443, end: 443 }] : null,
           notBefore: n % 17 === 0 ? new Date(now + 60_000).toISOString() : null,
           expiresAt:
             n % 19 === 0 ? new Date(now + 120_000).toISOString() : null,

@@ -19,8 +19,7 @@ const rule: Rule = {
   direction: "outgoing",
   peer: { kind: "ip", value: "10.22.242.99" },
   protocol: 17,
-  portStart: 18099,
-  portEnd: 18099,
+  ports: [{ start: 18099, end: 18099 }],
   icmpType: null,
   icmpCode: null,
   action: "allow",
@@ -41,8 +40,7 @@ const catchAll: Rule = {
   direction: "both",
   peer: { kind: "any" },
   protocol: null,
-  portStart: null,
-  portEnd: null,
+  ports: null,
   action: "block",
   expiresAt: null,
 };
@@ -78,8 +76,7 @@ describe("policy change details", () => {
   it("keeps changed fields, every service field, and no save bookkeeping", () => {
     const changed = {
       ...rule,
-      portStart: 18100,
-      portEnd: 18100,
+      ports: [{ start: 18100, end: 18100 }],
       expiresAt: "2026-10-27T18:00:00.000Z",
       modifiedAt: "2026-10-26T01:00:00.000Z",
     };
@@ -92,16 +89,14 @@ describe("policy change details", () => {
         id: ruleId,
         before: {
           protocol: 17,
-          portStart: 18099,
-          portEnd: 18099,
+          ports: [{ start: 18099, end: 18099 }],
           icmpType: null,
           icmpCode: null,
           expiresAt: "2026-10-27T10:00:00.000Z",
         },
         after: {
           protocol: 17,
-          portStart: 18100,
-          portEnd: 18100,
+          ports: [{ start: 18100, end: 18100 }],
           icmpType: null,
           icmpCode: null,
           expiresAt: "2026-10-27T18:00:00.000Z",

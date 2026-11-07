@@ -46,8 +46,7 @@ function rule(partial: Partial<Rule> = {}): Rule {
     direction: "outgoing",
     peer: { kind: "any" },
     protocol: null,
-    portStart: null,
-    portEnd: null,
+    ports: null,
     icmpType: null,
     icmpCode: null,
     action: "allow",
@@ -198,8 +197,7 @@ describe("subnet instances and address rules", () => {
       subject: { kind: "instance", instanceId: bridge },
       action: "block",
       protocol: 6,
-      portStart: 22,
-      portEnd: 22,
+      ports: [{ start: 22, end: 22 }],
     });
 
     const parentBlock = rule({
@@ -233,8 +231,7 @@ describe("subnet instances and address rules", () => {
         rule({
           subject: { kind: "instance", instanceId: runner },
           protocol: 6,
-          portStart: 22,
-          portEnd: 22,
+          ports: [{ start: 22, end: 22 }],
         }),
         [{ ...parentPortBlock, priority: "high" }],
         instances,
@@ -338,8 +335,7 @@ describe("subnet instances and address rules", () => {
       direction: "outgoing",
       peer: { kind: "gateway" },
       protocol: 6,
-      portStart: 22,
-      portEnd: 22,
+      ports: [{ start: 22, end: 22 }],
     });
 
     const value = policy([ssh]);

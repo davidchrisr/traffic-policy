@@ -3,6 +3,7 @@ import {
   ScopeTree,
   canonicalCidr,
   canonicalIp,
+  formatPorts,
   integerAddress,
   subjectScope,
 } from "@traffic-policy/contracts";
@@ -12,6 +13,7 @@ import type {
   Peer,
   Permission,
   Policy,
+  PortRange,
   Rule,
   ScopeEntry,
   Subject,
@@ -172,6 +174,11 @@ export function pathScopes(tree: ScopeTree): Map<string, Set<string>> {
 export const defaultSubjectRank = (rule: Pick<Rule, "subject">) =>
   rule.subject.kind === "global" ? 0 : 1;
 
+// Whether a port is in one of the ranges.
+export function inPorts(ranges: PortRange[], port: number): boolean {
+  return ranges.some(({ start, end }) => start <= port && port <= end);
+}
+
 export function ruleRank(
   rule: Rule,
   subject = defaultSubjectRank(rule),
@@ -179,8 +186,12 @@ export function ruleRank(
   return [
     rule.priority === "high" ? 1 : 0,
     ...peerRank(rule.peer),
-    rule.portStart === null ? 0 : 1,
-    rule.portStart === null ? 0 : 65536 - (rule.portEnd! - rule.portStart),
+    rule.ports === null ? 0 : 1,
+    // Fewer ports rank higher; a single range ranks as it did before port lists.
+    rule.ports === null
+      ? 0
+      : 65537 -
+        rule.ports.reduce((sum, range) => sum + range.end - range.start + 1, 0),
     rule.icmpType === null ? 0 : 1,
     rule.icmpCode === null ? 0 : 1,
     rule.protocol === null ? 0 : 1,
@@ -252,10 +263,7 @@ export function ruleMatches(
       ? flow.originalServicePort
       : flow.responderServicePort;
 
-  if (
-    rule.portStart !== null &&
-    (port === null || port < rule.portStart || port > rule.portEnd!)
-  )
+  if (rule.ports !== null && (port === null || !inPorts(rule.ports, port)))
     return false;
 
   if (
@@ -361,28 +369,31 @@ const protocolNames = new Map([
   [58, "ICMPv6"],
 ]);
 
-export function serviceLabel(
+// A protocol with a rule's port ranges.
+export function serviceRangesLabel(
   protocol: number | null,
-  portStart: number | null,
-  portEnd: number | null = portStart,
+  ports: PortRange[] | null,
 ): string {
-  if (protocol === null && portStart === null) return "any";
+  if (protocol === null && ports === null) return "any";
 
   const name =
     protocol === null
       ? "TCP/UDP"
       : (protocolNames.get(protocol) ?? `Protocol ${protocol}`);
 
-  if (portStart === null) return name;
+  return ports === null ? name : `${name}:${formatPorts(ports, "–")}`;
+}
 
-  return `${name}:${portStart}${portEnd === null || portEnd === portStart ? "" : `–${portEnd}`}`;
+// A protocol with an observed port.
+export function serviceLabel(protocol: number | null, port: number | null) {
+  return serviceRangesLabel(
+    protocol,
+    port === null ? null : [{ start: port, end: port }],
+  );
 }
 
 export function ruleScopeLabel(
-  rule: Pick<
-    Rule,
-    "peer" | "protocol" | "portStart" | "portEnd" | "icmpType" | "icmpCode"
-  >,
+  rule: Pick<Rule, "peer" | "protocol" | "ports" | "icmpType" | "icmpCode">,
 ): string {
   const peer =
     rule.peer.kind === "any"
@@ -393,7 +404,7 @@ export function ruleScopeLabel(
 
   const icmp = `${rule.icmpType === null ? "" : ` type ${rule.icmpType}`}${rule.icmpCode === null ? "" : ` code ${rule.icmpCode}`}`;
 
-  return `${peer} · ${serviceLabel(rule.protocol, rule.portStart, rule.portEnd)}${icmp}`;
+  return `${peer} · ${serviceRangesLabel(rule.protocol, rule.ports)}${icmp}`;
 }
 
 export const directionLabels = {
@@ -454,13 +465,13 @@ export function describeRule(rule: Rule, instances: Instance[] = []): string {
 }
 
 export function isCatchAll(
-  rule: Pick<Rule, "subject" | "peer" | "protocol" | "portStart">,
+  rule: Pick<Rule, "subject" | "peer" | "protocol" | "ports">,
 ): boolean {
   return (
     rule.subject.kind === "global" &&
     rule.peer.kind === "any" &&
     rule.protocol === null &&
-    rule.portStart === null
+    rule.ports === null
   );
 }
 
@@ -570,11 +581,11 @@ export function ruleCovers(outer: Rule, inner: Rule, tree: ScopeTree): boolean {
   const ported = (rule: Rule) =>
     rule.protocol === 6 ||
     rule.protocol === 17 ||
-    (rule.protocol === null && rule.portStart !== null);
+    (rule.protocol === null && rule.ports !== null);
 
   const protocol =
     outer.protocol === null
-      ? outer.portStart === null || ported(inner)
+      ? outer.ports === null || ported(inner)
       : outer.protocol === inner.protocol;
 
   return (
@@ -582,10 +593,13 @@ export function ruleCovers(outer: Rule, inner: Rule, tree: ScopeTree): boolean {
     (outer.direction === "both" || outer.direction === inner.direction) &&
     peerCovers(outer.peer, inner.peer) &&
     protocol &&
-    (outer.portStart === null ||
-      (inner.portStart !== null &&
-        outer.portStart <= inner.portStart &&
-        inner.portEnd! <= outer.portEnd!)) &&
+    (outer.ports === null ||
+      (inner.ports !== null &&
+        inner.ports.every((range) =>
+          outer.ports!.some(
+            (wider) => wider.start <= range.start && range.end <= wider.end,
+          ),
+        ))) &&
     (outer.icmpType === null || outer.icmpType === inner.icmpType) &&
     (outer.icmpCode === null || outer.icmpCode === inner.icmpCode)
   );
@@ -769,8 +783,7 @@ export function scopeKey(
     | "direction"
     | "peer"
     | "protocol"
-    | "portStart"
-    | "portEnd"
+    | "ports"
     | "icmpType"
     | "icmpCode"
   >,
@@ -780,8 +793,7 @@ export function scopeKey(
     rule.direction,
     rule.peer,
     rule.protocol,
-    rule.portStart,
-    rule.portEnd,
+    rule.ports,
     rule.icmpType,
     rule.icmpCode,
   ]);

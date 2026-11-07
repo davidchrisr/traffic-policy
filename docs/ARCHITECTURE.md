@@ -268,21 +268,24 @@ such rules exist, so registration never widens a rule. Removing an instance or a
 range is refused while an address subject would fall outside every instance.
 
 Active matching rules compare lexicographically by priority, peer, port presence
-and range width, ICMP type, ICMP code, protocol, subject, and direction. Block
-wins an otherwise equal tie; UUID breaks remaining ties. High priority outranks
-Normal. Peer order is exact IP, host-length CIDR, or the gateway, then exact
-hostname, domain, CIDR, then any peer. Deeper domains and longer CIDRs win
-within their kind. DNS-derived permissions retain their selector's rank. The
-subject key is the prefix length of the subject's range that covers the address,
-above global rules, so a nested scope overrides its parent only on an otherwise
-equal tie. More-specific global and parent rules can outrank broad nested rules.
+and the number of ports covered, ICMP type, ICMP code, protocol, subject, and
+direction. Block wins an otherwise equal tie; UUID breaks remaining ties. High
+priority outranks Normal. Peer order is exact IP, host-length CIDR, or the
+gateway, then exact hostname, domain, CIDR, then any peer. Deeper domains and
+longer CIDRs win within their kind. DNS-derived permissions retain their
+selector's rank. The subject key is the prefix length of the subject's range
+that covers the address, above global rules, so a nested scope overrides its
+parent only on an otherwise equal tie. More-specific global and parent rules can
+outrank broad nested rules.
 
 Direction describes who initiates relative to an instance. Outgoing downloads
 still receive bytes on an outgoing connection. The service port is the remote
 responder port for outgoing policy and the instance's local responder port for
-incoming policy. Between managed instances, both endpoint policies must allow
-the connection. A broad instance Block is subject to the same precedence as
-other rules.
+incoming policy. A rule's ports are a list of ports and inclusive ranges; the
+editor merges overlapping and adjacent entries, and the ruleset matches several
+as one anonymous set. Between managed instances, both endpoint policies must
+allow the connection. A broad instance Block is subject to the same precedence
+as other rules.
 
 The Gateway peer is the gateway itself at any of its addresses. It matches only
 connections the gateway receives from or starts to the subject, which the kernel

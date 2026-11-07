@@ -287,15 +287,16 @@
                 ? { kind: "any" }
                 : { kind: "hostname", value: request.question },
             protocol: null,
-            portStart: null,
-            portEnd: null,
+            ports: null,
           }
         : {
             direction: request.direction,
             peer: { kind: "ip", value: request.peerIp },
             protocol: request.protocol,
-            portStart: request.port,
-            portEnd: request.port,
+            ports:
+              request.port === null
+                ? null
+                : [{ start: request.port, end: request.port }],
           }),
     };
     open = true;

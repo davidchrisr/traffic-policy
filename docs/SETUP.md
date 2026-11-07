@@ -228,6 +228,11 @@ and health reports the failure.
 
 ## Upgrades
 
+The project is pre-deployment. Stored formats can change without migrations.
+When the controller's stored format changes, recreate the test state or repair
+it manually before starting the new build. Gateway recovery does not convert the
+controller database.
+
 Upgrade the gateway while the controller is running and can reach it. Install
 the new outputs the same way as above, then restart `tp-enforcement` followed by
 `tp-gateway`, or both `tp-controller` and `tp-controller-machine` on the

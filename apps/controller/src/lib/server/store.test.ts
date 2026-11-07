@@ -158,8 +158,7 @@ describe("controller contracts and persistence", () => {
         peer: { kind: "hostname" as const, value: "api.example.com" },
         action: "allow" as const,
         protocol: 6,
-        portStart: 443,
-        portEnd: 443,
+        ports: [{ start: 443, end: 443 }],
       };
 
       const policy = active.mutation(
@@ -1561,8 +1560,7 @@ describe("controller contracts and persistence", () => {
             subject: { kind: "instance", instanceId },
             action: "allow",
             protocol: 6,
-            portStart: 443,
-            portEnd: 443,
+            ports: [{ start: 443, end: 443 }],
           },
         ],
       }));
@@ -1585,7 +1583,7 @@ describe("controller contracts and persistence", () => {
         ...policy,
         rules: policy.rules.map((rule) =>
           rule.id === ruleId
-            ? { ...rule, portStart: 8443, portEnd: 8443 }
+            ? { ...rule, ports: [{ start: 8443, end: 8443 }] }
             : rule,
         ),
       }));
@@ -1628,7 +1626,7 @@ describe("controller contracts and persistence", () => {
         ...policy,
         rules: policy.rules.map((rule) =>
           rule.id === ruleId
-            ? { ...rule, portStart: 9443, portEnd: 9443 }
+            ? { ...rule, ports: [{ start: 9443, end: 9443 }] }
             : rule,
         ),
       }));
@@ -1643,7 +1641,7 @@ describe("controller contracts and persistence", () => {
         store
           .history()
           .audit.filter((item) => item.subject === ruleId)
-          .map((item) => [item.action, item.subjectRule?.portStart]),
+          .map((item) => [item.action, item.subjectRule?.ports?.[0]?.start]),
       ).toEqual([
         ["rule-updated", 9443],
         ["rule-deleted", 9443],
@@ -2053,8 +2051,7 @@ describe("late denials", () => {
         peer: { kind: "ip" as const, value: "10.22.242.99" },
         action: "allow" as const,
         protocol: 17,
-        portStart: 18083,
-        portEnd: 18083,
+        ports: [{ start: 18083, end: 18083 }],
       };
 
       const policy = store.mutation("2", "rule-created", allow.id, (value) => ({

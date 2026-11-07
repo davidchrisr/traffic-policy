@@ -8,24 +8,27 @@ import {
   type SubjectContext,
 } from "./index.ts";
 
-function serviceRange(rule: Rule, protocol: number): [number, number] | null {
+function serviceRanges(
+  rule: Rule,
+  protocol: number,
+): [number, number][] | null {
   if (rule.protocol !== null && rule.protocol !== protocol) return null;
 
-  if (rule.portStart !== null)
+  if (rule.ports !== null)
     return protocol === 6 || protocol === 17
-      ? [rule.portStart, rule.portEnd!]
+      ? rule.ports.map(({ start, end }) => [start, end])
       : null;
 
   if (protocol === 1 || protocol === 58) {
-    if (rule.icmpType === null) return [0, 65535];
+    if (rule.icmpType === null) return [[0, 65535]];
     const start = rule.icmpType * 256;
 
     return rule.icmpCode === null
-      ? [start, start + 255]
-      : [start + rule.icmpCode, start + rule.icmpCode];
+      ? [[start, start + 255]]
+      : [[start + rule.icmpCode, start + rule.icmpCode]];
   }
 
-  return [0, protocol === 6 || protocol === 17 ? 65535 : 0];
+  return [[0, protocol === 6 || protocol === 17 ? 65535 : 0]];
 }
 
 function visitRange(
@@ -58,11 +61,7 @@ const emptyCoverage = (): Coverage => ({ all: false, protocols: new Map() });
 
 // Adds the rule's services to the blocked coverage.
 function cover(coverage: Coverage, rule: Rule) {
-  if (
-    rule.protocol === null &&
-    rule.portStart === null &&
-    rule.icmpType === null
-  ) {
+  if (rule.protocol === null && rule.ports === null && rule.icmpType === null) {
     coverage.all = true;
 
     return;
@@ -73,9 +72,9 @@ function cover(coverage: Coverage, rule: Rule) {
     protocol <= (rule.protocol ?? 255);
     protocol++
   ) {
-    const range = serviceRange(rule, protocol);
+    const ranges = serviceRanges(rule, protocol);
 
-    if (!range) continue;
+    if (!ranges) continue;
     let blocked = coverage.protocols.get(protocol);
 
     if (!blocked) {
@@ -83,7 +82,7 @@ function cover(coverage: Coverage, rule: Rule) {
       coverage.protocols.set(protocol, blocked);
     }
 
-    visitRange(blocked, ...range, true);
+    for (const range of ranges) visitRange(blocked, ...range, true);
   }
 }
 
@@ -96,10 +95,13 @@ function open(coverage: Coverage, rule: Rule): boolean {
     protocol <= (rule.protocol ?? 255);
     protocol++
   ) {
-    const range = serviceRange(rule, protocol);
-    const blocked = range ? coverage.protocols.get(protocol) : undefined;
+    const ranges = serviceRanges(rule, protocol);
+    const blocked = ranges ? coverage.protocols.get(protocol) : undefined;
 
-    if (range && (!blocked || visitRange(blocked, ...range, false)))
+    if (
+      ranges &&
+      (!blocked || ranges.some((range) => visitRange(blocked, ...range, false)))
+    )
       return true;
   }
 
@@ -187,7 +189,7 @@ export function rankDns(
       (rule) =>
         rule.action === "block" &&
         rule.protocol === null &&
-        rule.portStart === null,
+        rule.ports === null,
     );
 
   return {

@@ -31,8 +31,7 @@ function rule(
     direction: "both",
     peer: { kind: "any" },
     protocol: null,
-    portStart: null,
-    portEnd: null,
+    ports: null,
     icmpType: null,
     icmpCode: null,
     action: "block",
@@ -297,8 +296,7 @@ describe("Monitor rule state", () => {
       direction: "outgoing",
       peer: { kind: "gateway" },
       protocol: 6,
-      portStart: 22,
-      portEnd: 22,
+      ports: [{ start: 22, end: 22 }],
     });
 
     const decide = (
