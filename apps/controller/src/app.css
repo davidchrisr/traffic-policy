@@ -619,24 +619,34 @@
 .traffic-sent svg {
   color: var(--traffic-sent);
 }
-.traffic-share {
+/* A fixed track, so bar lengths compare across rows whatever the pill widths. */
+.traffic-bar {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  height: 5px;
-}
-.traffic-share-sent {
-  background: var(--traffic-sent);
-  height: 2px;
-}
-.traffic-share-baseline {
+  justify-content: flex-end;
+  align-self: flex-end;
+  width: 10rem;
+  max-width: 100%;
+  height: 4px;
+  border-radius: 2px;
   background: var(--border);
-  width: 100%;
-  height: 1px;
 }
-.traffic-share-received {
+.traffic-bar-fill {
+  display: flex;
+  gap: 2px;
+  min-width: 6px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.traffic-bar-received,
+.traffic-bar-sent {
+  flex-basis: 0;
+  min-width: 0;
+}
+.traffic-bar-received {
   background: var(--traffic-received);
-  height: 2px;
+}
+.traffic-bar-sent {
+  background: var(--traffic-sent);
 }
 .monitor-service {
   margin-left: 36px;

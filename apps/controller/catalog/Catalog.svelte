@@ -723,7 +723,11 @@
                 ></button
               >
               <span class="monitor-measure"
-                ><TrafficMeasure received="12582912" sent="1048576" /></span
+                ><TrafficMeasure
+                  received="12582912"
+                  sent="1048576"
+                  scale={20971520n}
+                /></span
               >
               <div class="monitor-actions">
                 <RuleDecision
@@ -749,7 +753,7 @@
                     ><TrafficMeasure
                       received={service.received}
                       sent={service.sent}
-                      meter
+                      scale={20971520n}
                     /></span
                   >
                 </button>{/each}{/if}

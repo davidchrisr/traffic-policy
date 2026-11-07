@@ -49,6 +49,38 @@ export function groupDestinations<T extends TrafficService>(services: T[]) {
   }));
 }
 
+type Traffic = { receivedBytes: string; sentBytes: string };
+
+export function trafficTotals(items: Traffic[]) {
+  return {
+    receivedBytes: items
+      .reduce((total, item) => total + BigInt(item.receivedBytes), 0n)
+      .toString(),
+    sentBytes: items
+      .reduce((total, item) => total + BigInt(item.sentBytes), 0n)
+      .toString(),
+  };
+}
+
+export function trafficTotal(item: Traffic) {
+  return BigInt(item.receivedBytes) + BigInt(item.sentBytes);
+}
+
+// A Monitor row's bar: `fill` is the row's percentage of `scale` (its instance's total), and
+// `received` is the received percentage of the row's own total.
+export function trafficBar(item: Traffic, scale: bigint) {
+  const total = trafficTotal(item);
+
+  const percent = (part: bigint, whole: bigint) =>
+    whole > 0n ? Number((part * 10000n) / whole) / 100 : 0;
+
+  return {
+    fill: percent(total, scale),
+    received: percent(BigInt(item.receivedBytes), total),
+    empty: total === 0n,
+  };
+}
+
 export function groupNames<
   T extends {
     key: string;
@@ -68,15 +100,6 @@ export function groupNames<
 ) {
   const domains = new Map<string, Map<string, T[]>>(),
     ungrouped: (T & { names: string[] })[] = [];
-
-  const sum = (items: T[]) => ({
-    receivedBytes: items
-      .reduce((total, item) => total + BigInt(item.receivedBytes), 0n)
-      .toString(),
-    sentBytes: items
-      .reduce((total, item) => total + BigInt(item.sentBytes), 0n)
-      .toString(),
-  });
 
   for (const peer of peers) {
     const aliases = names.filter(
@@ -116,13 +139,13 @@ export function groupNames<
           .map(([hostname, members]) => ({
             name: hostname,
             peers: members,
-            ...sum(members),
+            ...trafficTotals(members),
           }));
 
         return {
           name,
           hosts: entries,
-          ...sum(entries.flatMap((host) => host.peers)),
+          ...trafficTotals(entries.flatMap((host) => host.peers)),
         };
       }),
     ungrouped,

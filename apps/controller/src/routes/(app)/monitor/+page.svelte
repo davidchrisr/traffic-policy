@@ -14,6 +14,8 @@
     groupBlocked,
     groupDestinations,
     groupNames,
+    trafficTotal,
+    trafficTotals,
   } from "#lib/monitor-groups.ts";
   import {
     isCatchAll,
@@ -189,10 +191,14 @@
   const destinations = $derived(groupDestinations(shown));
 
   const groups = $derived(
-    model.instances.map((instance) => ({
-      ...instance,
-      peers: destinations.filter((peer) => peer.instanceId === instance.id),
-    })),
+    model.instances.map((instance) => {
+      const peers = destinations.filter(
+        (peer) => peer.instanceId === instance.id,
+      );
+
+      // Every bar in an instance measures against the instance's total, so no row outgrows its parent.
+      return { ...instance, peers, ...trafficTotals(peers) };
+    }),
   );
 
   const selectedName = $derived(
@@ -410,6 +416,7 @@
 {#snippet peerRows(
   peers: ((typeof destinations)[number] & { names?: string[] })[],
   instanceName: string,
+  scale: bigint,
 )}
   {#each peers as peer (peer.key)}
     {@const peerState = rowState(serviceDecisions(peer.services))}
@@ -456,7 +463,11 @@
           ? "Totals for visible services"
           : "Destination traffic"}
       >
-        <TrafficMeasure received={peer.receivedBytes} sent={peer.sentBytes} />
+        <TrafficMeasure
+          received={peer.receivedBytes}
+          sent={peer.sentBytes}
+          {scale}
+        />
       </div>
       <div class="monitor-actions">
         <RuleDecision
@@ -507,7 +518,7 @@
             <TrafficMeasure
               received={service.receivedBytes}
               sent={service.sentBytes}
-              meter
+              {scale}
             />
           </div>
           <div class="monitor-actions">
@@ -570,9 +581,9 @@
         {#if hasMeasurements}Displayed measurements have not been updated.{/if}
       </p>{/if}
     {#if listingTruncated}<p class="text-pending mb-3 text-xs">
-        The first 1,000 services are shown. Destination sums cover visible
-        services; selection totals and the timeline cover the complete
-        selection.
+        The first 1,000 services are shown. Instance, name, and destination sums
+        cover visible services; selection totals and the timeline cover the
+        complete selection.
       </p>{/if}
     {#if model.namesTruncated}<p class="text-pending mb-3 text-xs">
         Name observations are limited for this period. Use a shorter period for
@@ -632,6 +643,18 @@
                     : "destinations"}</span
                 ></button
               >
+              <div
+                class="monitor-measure"
+                title={listingTruncated
+                  ? "Totals for visible services"
+                  : undefined}
+              >
+                <TrafficMeasure
+                  received={group.receivedBytes}
+                  sent={group.sentBytes}
+                  scale={trafficTotal(group)}
+                />
+              </div>
               <div class="monitor-actions">
                 <RuleDecision
                   state={groupState.state}
@@ -682,10 +705,16 @@
                         : "hostnames"}</span
                     ></button
                   >
-                  <div class="monitor-measure">
+                  <div
+                    class="monitor-measure"
+                    title={listingTruncated
+                      ? "Totals for visible services"
+                      : undefined}
+                  >
                     <TrafficMeasure
                       received={domain.receivedBytes}
                       sent={domain.sentBytes}
+                      scale={trafficTotal(group)}
                     />
                   </div>
                   <div class="monitor-actions">
@@ -743,10 +772,16 @@
                               key: hostKey,
                             })}>{host.name}</button
                         >
-                        <div class="monitor-measure">
+                        <div
+                          class="monitor-measure"
+                          title={listingTruncated
+                            ? "Totals for visible services"
+                            : undefined}
+                        >
                           <TrafficMeasure
                             received={host.receivedBytes}
                             sent={host.sentBytes}
+                            scale={trafficTotal(group)}
                           />
                         </div>
                         <div class="monitor-actions">
@@ -768,7 +803,11 @@
                         </div>
                       </div>
                       {#if expandedNames.includes(hostKey)}<div class="pl-4">
-                          {@render peerRows(host.peers, group.name)}
+                          {@render peerRows(
+                            host.peers,
+                            group.name,
+                            trafficTotal(group),
+                          )}
                         </div>{/if}
                     {/each}
                   </div>
@@ -776,6 +815,7 @@
               {/each}
               {#if named.ungrouped.length}
                 {@const addressesOpen = !collapsedAddresses.includes(group.id)}
+                {@const addresses = trafficTotals(named.ungrouped)}
                 <div class="list-row monitor-row monitor-destination">
                   <Button
                     variant="ghost"
@@ -800,9 +840,29 @@
                         : "addresses"}</span
                     ></span
                   >
+                  <div
+                    class="monitor-measure"
+                    title={listingTruncated
+                      ? "Totals for visible services"
+                      : undefined}
+                  >
+                    <TrafficMeasure
+                      received={addresses.receivedBytes}
+                      sent={addresses.sentBytes}
+                      scale={trafficTotal(group)}
+                    />
+                  </div>
+                  <!-- Holds the decision column so this row's traffic lines up with its neighbors'. -->
+                  <div class="monitor-actions" aria-hidden="true">
+                    <span class="rule-decision invisible h-6 w-12"></span>
+                  </div>
                 </div>
                 {#if addressesOpen}<div class="pl-4">
-                    {@render peerRows(named.ungrouped, group.name)}
+                    {@render peerRows(
+                      named.ungrouped,
+                      group.name,
+                      trafficTotal(group),
+                    )}
                   </div>{/if}
               {/if}
             {/if}

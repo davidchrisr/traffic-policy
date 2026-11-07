@@ -3,6 +3,8 @@ import {
   groupBlocked,
   groupDestinations,
   groupNames,
+  trafficBar,
+  trafficTotals,
 } from "./monitor-groups.ts";
 
 describe("Monitor destination grouping", () => {
@@ -217,5 +219,38 @@ describe("Monitor blocked rules", () => {
         false,
       ),
     ).toMatchObject({ rules: [], instanceBlocked: false });
+  });
+});
+
+describe("Monitor traffic bars", () => {
+  it("measures a row against its scale and splits it by direction", () => {
+    expect(
+      trafficBar({ receivedBytes: "750", sentBytes: "250" }, 4000n),
+    ).toEqual({ fill: 25, received: 75, empty: false });
+    expect(trafficBar({ receivedBytes: "3", sentBytes: "0" }, 3n)).toEqual({
+      fill: 100,
+      received: 100,
+      empty: false,
+    });
+  });
+
+  it("keeps a tiny share nonempty and marks a row without traffic", () => {
+    expect(
+      trafficBar({ receivedBytes: "1", sentBytes: "0" }, 1000000n),
+    ).toMatchObject({ fill: 0, empty: false });
+    expect(trafficBar({ receivedBytes: "0", sentBytes: "0" }, 0n)).toEqual({
+      fill: 0,
+      received: 0,
+      empty: true,
+    });
+  });
+
+  it("sums totals beyond the safe integer range", () => {
+    expect(
+      trafficTotals([
+        { receivedBytes: "9007199254740993", sentBytes: "1" },
+        { receivedBytes: "1", sentBytes: "2" },
+      ]),
+    ).toEqual({ receivedBytes: "9007199254740994", sentBytes: "3" });
   });
 });

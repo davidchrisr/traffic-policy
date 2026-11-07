@@ -251,9 +251,15 @@ only a rendering convention; axis labels, totals and tooltips show positive
 amounts with directional labels. Bars have a 2px minimum and 10px maximum width
 so isolated samples stay visible in long ranges; their heights remain
 proportional to measured bytes. Faint vertical guides provide context. No
-minimum bar height or synthetic samples are added. Service share meters also
-split Sent above and Received below, using each direction's proportion of the
-service total.
+minimum bar height or synthetic samples are added.
+
+Monitor rows carry a bar under their traffic pills on a fixed-width track. Its
+length is the row's share of its instance's total, so the instance row fills the
+track and no row is longer than its parent. The fill grows from the track's
+right end, beside the decision controls. It splits Received (blue, left) and
+Sent (orange, right) by each direction's proportion of the row total, in the
+pills' order, with a 2px gap. A row with any traffic shows at least a 6px fill;
+a row with none shows only the track.
 
 Charts approximate pixel positions; formatted values use the truncation
 described above. Tooltips retain original decimal byte counts. Missing

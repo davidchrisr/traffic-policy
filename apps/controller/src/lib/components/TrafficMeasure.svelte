@@ -1,25 +1,23 @@
 <script lang="ts">
   import { ArrowDown, ArrowUp } from "@lucide/svelte";
   import { displayTrafficBytes } from "#lib/client.ts";
+  import { trafficBar } from "#lib/monitor-groups.ts";
 
   let {
     received,
     sent,
-    meter = false,
+    scale,
   }: {
     received: string;
     sent: string;
-    meter?: boolean;
+    // The total the bar's length is measured against; without it, no bar is drawn.
+    scale?: bigint;
   } = $props();
 
-  const total = $derived(BigInt(received) + BigInt(sent));
-
-  const receivedShare = $derived(
-    total > 0n ? Number((BigInt(received) * 10000n) / total) / 100 : 0,
-  );
-
-  const sentShare = $derived(
-    total > 0n ? Number((BigInt(sent) * 10000n) / total) / 100 : 0,
+  const bar = $derived(
+    scale === undefined
+      ? null
+      : trafficBar({ receivedBytes: received, sentBytes: sent }, scale),
   );
 </script>
 
@@ -41,12 +39,20 @@
       <ArrowUp size={12} aria-hidden="true" />{displayTrafficBytes(sent)}
     </span>
   </span>
-  {#if meter}
-    <span class="traffic-share" aria-hidden="true">
-      <span class="traffic-share-sent" style:width={`${sentShare}%`}></span>
-      <span class="traffic-share-baseline"></span>
-      <span class="traffic-share-received" style:width={`${receivedShare}%`}
-      ></span>
+  {#if bar}
+    <span class="traffic-bar" aria-hidden="true">
+      {#if !bar.empty}
+        <span class="traffic-bar-fill" style:width={`${bar.fill}%`}>
+          {#if bar.received > 0}<span
+              class="traffic-bar-received"
+              style:flex-grow={bar.received}
+            ></span>{/if}
+          {#if bar.received < 100}<span
+              class="traffic-bar-sent"
+              style:flex-grow={100 - bar.received}
+            ></span>{/if}
+        </span>
+      {/if}
     </span>
   {/if}
 </span>
