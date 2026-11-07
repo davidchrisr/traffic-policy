@@ -1,0 +1,172 @@
+# Development stack: controller, gateway, and one routed client built from the mounted source.
+# For application testing with nerdctl compose, not the production install; see README.md.
+
+# The image is built here and never pulled. Every service names the build, because nerdctl compose
+# pulls a missing image before building it.
+x-runtime: &runtime
+  image: traffic-policy-dev-runtime:1
+  build: .
+  restart: "no"
+  # Each service adds back only the capabilities its entry script and processes use.
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges]
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+x-source: &source ../..:/src:ro
+
+services:
+  build:
+    <<: *runtime
+    command: /src/dev/docker/build.sh
+    environment:
+      TP_ORIGIN: ${TP_ORIGIN:?Set TP_ORIGIN in the env file}
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          pids: 1024
+    # Also set at service level, which nerdctl applies to the container.
+    pids_limit: 1024
+    volumes:
+      - *source
+      - work:/work
+      - bun-cache:/cache
+
+  init:
+    <<: *runtime
+    command: /src/dev/docker/init.sh
+    network_mode: none
+    # Certificate/state ownership and setup-admin as the service account; DAC_READ_SEARCH reads
+    # the private password secret when nerdctl preserves its non-root host owner.
+    cap_add: [CHOWN, DAC_READ_SEARCH, FOWNER, SETGID, SETPCAP, SETUID]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          pids: 128
+    # Also set at service level, which nerdctl applies to the container.
+    pids_limit: 128
+    secrets: [admin_password]
+    volumes:
+      - *source
+      - work:/work:ro
+      - config:/config
+      - controller:/var/lib/traffic-policy
+
+  controller:
+    <<: *runtime
+    command: /src/dev/docker/controller.sh
+    environment:
+      TP_ORIGIN: ${TP_ORIGIN}
+      TP_BROWSER_TRANSPORT: ${TP_BROWSER_TRANSPORT:-http-local-test}
+    # Starting both processes as the service account.
+    cap_add: [SETGID, SETPCAP, SETUID]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          pids: 256
+    # Also set at service level, which nerdctl applies to the container.
+    pids_limit: 256
+    stop_grace_period: 30s
+    ports:
+      - ${TP_BROWSER_BIND:-127.0.0.1}:${TP_BROWSER_PORT:-9444}:9444
+    networks:
+      upstream: { ipv4_address: "${TP_CONTROLLER_ADDRESS:-172.30.0.200}" }
+    volumes:
+      - *source
+      - work:/work:ro
+      - config:/config:ro
+      - controller:/var/lib/traffic-policy
+
+  gateway:
+    <<: *runtime
+    command: /src/dev/docker/gateway.sh
+    environment:
+      TP_CONTROLLER_ADDRESS: ${TP_CONTROLLER_ADDRESS:-172.30.0.200}
+      TP_DNS_RECEIVE_BUFFER_BYTES: ${TP_DNS_RECEIVE_BUFFER_BYTES:-131072}
+    # The units' capabilities (NET_ADMIN for enforcement, NET_RAW for Suricata, CHOWN,
+    # DAC_READ_SEARCH, and SYS_PTRACE for rotation), plus what this container does in their place:
+    # KILL to signal Suricata; CHOWN, FOWNER, and FSETID for state directories, including the
+    # setgid bit that gives Suricata's output the traffic-policy group; and SETUID, SETGID, and
+    # SETPCAP to start each process with its unit's account and capabilities.
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+      - FOWNER
+      - FSETID
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - SETGID
+      - SETPCAP
+      - SETUID
+      - SYS_PTRACE
+    # The forward guard writes /proc/sys/net/*/forwarding, as it does on a host.
+    security_opt: [no-new-privileges, systempaths=unconfined]
+    sysctls:
+      net.netfilter.nf_conntrack_acct: "1"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          pids: 512
+    # Also set at service level, which nerdctl applies to the container.
+    pids_limit: 512
+    stop_grace_period: 30s
+    networks: [upstream, clients]
+    volumes:
+      - *source
+      - work:/work:ro
+      - config:/config:ro
+      - gateway:/var/lib/traffic-policy
+
+  client:
+    <<: *runtime
+    command: /src/dev/docker/client.sh
+    # Routing through the gateway.
+    cap_add: [NET_ADMIN]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          pids: 64
+    # Also set at service level, which nerdctl applies to the container.
+    pids_limit: 64
+    networks:
+      clients: { ipv4_address: "${TP_CLIENT_ADDRESS:-172.30.1.200}" }
+    volumes:
+      - *source
+
+# Fixed per stack, so registered client addresses and the controller's exempt address survive
+# container restarts. Static addresses sit high in each subnet, clear of dynamic allocation.
+networks:
+  upstream:
+    ipam:
+      config: [{ subnet: "${TP_UPSTREAM_SUBNET:-172.30.0.0/24}" }]
+  # Internal: the gateway is the clients' only way out. nerdctl ignores this; client.sh routes
+  # through the gateway either way.
+  clients:
+    internal: true
+    ipam:
+      config: [{ subnet: "${TP_CLIENTS_SUBNET:-172.30.1.0/24}" }]
+
+volumes:
+  work: {}
+  config: {}
+  controller: {}
+  gateway: {}
+  # Shared by every stack on the host and kept by `down -v`; create it once per host with
+  # `nerdctl volume create tp-dev-bun-cache`.
+  bun-cache:
+    name: tp-dev-bun-cache
+    external: true
+
+# Admin's password, read once by init. Keep the file outside the repository.
+secrets:
+  admin_password:
+    file: ${TP_ADMIN_PASSWORD_FILE:?Set TP_ADMIN_PASSWORD_FILE to a file holding Admin's password}

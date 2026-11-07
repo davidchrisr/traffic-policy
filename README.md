@@ -65,9 +65,11 @@ checks can run without this variable; production builds require it.
 
 The [CI workflow](.github/workflows/ci.yml) runs the quality checks and a build
 without privileged networking. Native firewall and full network integration
-checks require a separate Linux lab. Run `bun run catalog` to open the component
-catalog for frontend work. [Linting](docs/LINTING.md) explains the ESLint,
-Oxlint and anti-slop policies.
+checks require a separate Linux lab. A [development stack](dev/docker/README.md)
+runs a controller, gateway and routed client in containers for end-to-end
+checks; [Verification](docs/VERIFICATION.md) describes using it. Run
+`bun run catalog` to open the component catalog for frontend work.
+[Linting](docs/LINTING.md) explains the ESLint, Oxlint and anti-slop policies.
 
 ## Run it
 
@@ -92,6 +94,7 @@ automatically.
 | `tools/`              | Build, runtime and Admin setup tooling                              |
 | `packaging/linux/`    | Linux service units, sysctls and pinned runtime metadata            |
 | `examples/`           | Deployment configuration templates                                  |
+| `dev/docker/`         | Development stack for end-to-end checks                             |
 | `DESIGN.md`           | Visual design and component recipes                                 |
 | `docs/`               | Architecture, setup, product behavior and benchmarks                |
 

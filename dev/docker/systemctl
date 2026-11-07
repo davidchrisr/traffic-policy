@@ -1,0 +1,96 @@
+#!/bin/bash
+# Development stack only. Answers the systemctl calls the application makes: service status for
+# every tp-* unit, and suricata-rotate's control of tp-suricata.service. Entry scripts record each
+# process's PID as /run/tp-dev/<unit>.pid; any other call fails.
+set -euo pipefail
+
+readonly run=/run/tp-dev
+readonly suricata=tp-suricata.service
+
+pid_of() {
+  if [[ -r $run/$1.pid ]]; then
+    cat -- "$run/$1.pid"
+  fi
+}
+
+# /proc rather than kill -0, so service accounts can check processes they do not own. An exited
+# process awaiting its parent's reaping does not count.
+alive() {
+  [[ -r /proc/$1/status ]] && ! grep -q '^State:[[:space:]]*Z' "/proc/$1/status"
+}
+
+running() {
+  local pid
+  pid="$(pid_of "$1")"
+  [[ -n $pid ]] && alive "$pid"
+}
+
+show() {
+  local unit first=1
+
+  for unit in "$@"; do
+    if [[ $unit == --property=* ]]; then
+      continue
+    fi
+
+    if ((first == 0)); then
+      printf '\n'
+    fi
+
+    first=0
+
+    if running "$unit"; then
+      printf 'Id=%s\nLoadState=loaded\nActiveState=active\nSubState=running\n' "$unit"
+      printf 'Result=success\nExecMainStatus=0\nNRestarts=0\nMainPID=%s\n' "$(pid_of "$unit")"
+    else
+      printf 'Id=%s\nLoadState=loaded\nActiveState=inactive\nSubState=dead\n' "$unit"
+      printf 'Result=success\nExecMainStatus=0\nNRestarts=0\nMainPID=0\n'
+    fi
+  done
+}
+
+unsupported() {
+  printf 'systemctl (development stand-in): unsupported: %s\n' "$*" >&2
+  exit 1
+}
+
+main() {
+  local pid
+
+  case "$*" in
+    "show "*)
+      shift
+      show "$@"
+      ;;
+    "kill --kill-whom=main --signal=HUP $suricata")
+      if ! running "$suricata"; then
+        printf '%s is not running\n' "$suricata" >&2
+        exit 1
+      fi
+
+      kill -s HUP "$(pid_of "$suricata")"
+      ;;
+    "start $suricata")
+      if ! running "$suricata"; then
+        /src/dev/docker/suricata.sh
+      fi
+      ;;
+    "stop $suricata")
+      if running "$suricata"; then
+        pid="$(pid_of "$suricata")"
+        kill -s TERM "$pid"
+
+        while alive "$pid"; do
+          sleep 0.2
+        done
+      fi
+
+      rm -f -- "$run/$suricata.pid"
+      ;;
+    *)
+      unsupported "$@"
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,3 @@
+# The image needs only the systemctl stand-in; env files and secrets never enter the build context.
+*
+!systemctl
