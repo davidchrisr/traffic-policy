@@ -77,8 +77,9 @@ function create(
     signal: AbortSignal,
   ) => Promise<MonitorSnapshot>,
   now = () => 300000,
+  period?: { period: string; since: number },
 ) {
-  const view = new MonitorView(snapshot(), load, now);
+  const view = new MonitorView(snapshot(), load, now, period);
   views.push(view);
 
   return view;
@@ -163,6 +164,23 @@ describe("Monitor view ownership", () => {
     await settle();
     expect(calls).toHaveLength(2);
     expect(calls[1]!.get("from")).toBe(new Date(now).toISOString());
+  });
+  it("opens with the period its initial snapshot was loaded for", async () => {
+    const calls: URLSearchParams[] = [];
+
+    const view = create(
+      async (query) => {
+        calls.push(query);
+
+        return snapshot();
+      },
+      () => 900000,
+      { period: "from-now", since: 100000 },
+    );
+
+    expect(view.snapshot).toMatchObject({ period: "from-now", since: 100000 });
+    await view.refresh();
+    expect(calls[0]!.get("from")).toBe(new Date(100000).toISOString());
   });
   it("keeps a scoped reply separate from the full roster and rejects an obsolete view", async () => {
     let finishOld!: (value: MonitorSnapshot) => void;

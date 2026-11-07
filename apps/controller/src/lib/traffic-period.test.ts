@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { trafficWindow } from "./traffic-period.ts";
+import {
+  periodCookie,
+  readPeriodCookie,
+  trafficWindow,
+} from "./traffic-period.ts";
 
 describe("traffic periods", () => {
   it("keeps a From now anchor fixed as the end moves and supports resetting it", () => {
@@ -29,5 +33,32 @@ describe("traffic periods", () => {
 
     const all = trafficWindow("all", now, now);
     expect(Date.parse(all.to) - Date.parse(all.from)).toBe(180 * 86400000);
+  });
+  it("remembers a period, or a From now start, in a cookie value", () => {
+    const now = Date.parse("2026-10-10T00:00:00Z");
+    expect(periodCookie("604800", now)).toBe("604800");
+    expect(readPeriodCookie("604800", now)).toEqual({
+      period: "604800",
+      since: now,
+    });
+    expect(readPeriodCookie(periodCookie("from-now", now - 5000), now)).toEqual(
+      { period: "from-now", since: now - 5000 },
+    );
+  });
+  it("reads an unknown or future cookie value as no period", () => {
+    const now = Date.parse("2026-10-10T00:00:00Z");
+
+    for (const value of [undefined, "", "301", "from-now", "from-now:x"])
+      expect(readPeriodCookie(value, now)).toBeNull();
+
+    expect(readPeriodCookie(`from-now:${now + 1}`, now)).toBeNull();
+    // Monitor refuses windows beyond the retained 180 days, so an older start is not used.
+    expect(
+      readPeriodCookie(`from-now:${now - 180 * 86400000 - 1}`, now),
+    ).toBeNull();
+    expect(readPeriodCookie(`from-now:${now - 180 * 86400000}`, now)).toEqual({
+      period: "from-now",
+      since: now - 180 * 86400000,
+    });
   });
 });

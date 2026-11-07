@@ -51,6 +51,7 @@
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Input } from "#lib/components/ui/input/index.ts";
   import TrafficPeriodPicker from "#lib/components/TrafficPeriodPicker.svelte";
+  import { TRAFFIC_PERIOD_COOKIE, periodCookie } from "#lib/traffic-period.ts";
   import TrafficChart from "#lib/components/TrafficChart.svelte";
   import TrafficMeasure from "#lib/components/TrafficMeasure.svelte";
   import RuleEditor from "#lib/components/RuleEditor.svelte";
@@ -61,25 +62,27 @@
   let { data }: PageProps = $props();
 
   const controller = new MonitorView(
-    untrack(() => data),
+    untrack(() => data.snapshot),
     async (query, signal) =>
       monitorSnapshotSchema.parse(
         await api(`monitor?${query}`, "GET", undefined, signal),
       ),
+    undefined,
+    untrack(() => data.period),
   );
 
   let view = $state.raw(untrack(() => controller.snapshot));
 
   let search = $state(""),
     expanded = $state<string[]>(
-      untrack(() => data.instances.map((instance) => instance.id)),
+      untrack(() => data.snapshot.instances.map((instance) => instance.id)),
     ),
     expandedPeers = $state<string[]>([]),
     editorOpen = $state(false),
     inspectorOpen = $state(false),
     scope = $state<Partial<RuleDraft> | null>(null),
     editing = $state<Rule | null>(null),
-    revision = $state(untrack(() => data.status.desiredRevision));
+    revision = $state(untrack(() => data.snapshot.status.desiredRevision));
 
   const model = $derived(view.model),
     roster = $derived(view.roster),
@@ -139,6 +142,11 @@
   const peerAddress = $derived(
     view.scope.kind === "destination" ? view.scope.peerIp : null,
   );
+
+  // The server loads the remembered period, so a reload or a later visit opens with it.
+  $effect(() => {
+    document.cookie = `${TRAFFIC_PERIOD_COOKIE}=${periodCookie(view.period, view.since)}; Path=/monitor; Max-Age=31536000; SameSite=Lax`;
+  });
 
   onMount(() => {
     const unsubscribe = controller.subscribe((next) => {
@@ -221,7 +229,7 @@
   async function create(
     action: "allow" | "block",
     instanceId: string,
-    service?: (typeof data.services)[number],
+    service?: (typeof data.snapshot.services)[number],
     peerIp?: string,
     namedPeer?: { kind: "domain" | "hostname"; value: string },
     direction: "outgoing" | "incoming" | "both" = "both",

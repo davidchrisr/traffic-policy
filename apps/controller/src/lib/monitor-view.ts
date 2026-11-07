@@ -6,7 +6,11 @@ import {
 } from "@traffic-policy/contracts/dashboard";
 import { ApiError } from "./client.ts";
 import { RefreshRunner } from "./refresh-runner.ts";
-import { trafficPeriods, trafficWindow } from "./traffic-period.ts";
+import {
+  DEFAULT_TRAFFIC_PERIOD,
+  trafficPeriods,
+  trafficWindow,
+} from "./traffic-period.ts";
 
 export type MonitorScope =
   | { kind: "all" }
@@ -106,11 +110,12 @@ export class MonitorView {
     initial: MonitorSnapshot,
     private readonly load: Loader,
     private readonly now = Date.now,
+    // The period `initial` was loaded for.
+    period = { period: DEFAULT_TRAFFIC_PERIOD, since: now() },
   ) {
     this.state = {
       scope: { kind: "all" },
-      period: "300",
-      since: now(),
+      ...period,
       model: initial,
       roster: initial.services,
       names: initial.names,
