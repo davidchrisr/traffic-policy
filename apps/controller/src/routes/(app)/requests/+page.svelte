@@ -26,7 +26,7 @@
     subjectContext,
   } from "@traffic-policy/core";
   import {
-    instanceSchema,
+    instanceInputSchema,
     ipSchema,
     type Rule,
   } from "@traffic-policy/contracts";
@@ -358,17 +358,13 @@
       (instance) => instance.id === registerTarget,
     );
 
-    const parsed = instanceSchema.safeParse(
+    const parsed = instanceInputSchema.safeParse(
       existing
         ? {
-            ...existing,
+            name: existing.name,
             addresses: [...existing.addresses, registerAddress.trim()],
           }
-        : {
-            id: crypto.randomUUID(),
-            name: registerName,
-            addresses: [registerAddress.trim()],
-          },
+        : { name: registerName, addresses: [registerAddress.trim()] },
     );
 
     if (!parsed.success) {
@@ -380,10 +376,15 @@
     registerSaving = true;
 
     try {
-      await api("instances", "PUT", {
-        expectedRevision: model.status.desiredRevision,
-        instance: parsed.data,
-      });
+      // The controller assigns a new instance's identity.
+      await api(
+        existing ? `instances/${existing.id}` : "instances",
+        existing ? "PUT" : "POST",
+        {
+          expectedRevision: model.status.desiredRevision,
+          instance: parsed.data,
+        },
+      );
       registering = null;
       await refresh();
     } catch (failure) {

@@ -213,18 +213,24 @@ export function subjectScope(subject: Subject): string | null {
 // Keys are derived from a validated policy and never parsed from input.
 export const pathKeySchema = z.string();
 
-export const instanceSchema = z
-  .object({
-    id: z.string().uuid(),
-    name: z.string().trim().min(1).max(128),
-    addresses: z.array(instanceAddressSchema).min(1).max(32),
-  })
+const instanceFields = {
+  name: z.string().trim().min(1).max(128),
+  addresses: z.array(instanceAddressSchema).min(1).max(32),
+};
+
+const uniqueAddresses = (instance: { addresses: string[] }) =>
+  new Set(instance.addresses).size === instance.addresses.length;
+
+// An instance as Admin submits it; the controller assigns its identity.
+export const instanceInputSchema = z
+  .object(instanceFields)
   .strict()
-  .refine(
-    (instance) =>
-      new Set(instance.addresses).size === instance.addresses.length,
-    "Instance addresses must be unique",
-  );
+  .refine(uniqueAddresses, "Instance addresses must be unique");
+
+export const instanceSchema = z
+  .object({ id: z.string().uuid(), ...instanceFields })
+  .strict()
+  .refine(uniqueAddresses, "Instance addresses must be unique");
 
 // A rule lists at most this many ports and port ranges.
 export const MAX_RULE_PORTS = 64;

@@ -172,10 +172,25 @@ const handle: RequestHandler = async (event) => {
         revision: store().desired().revision,
       });
 
-    if (path === "instances" && method === "PUT") {
+    if (path === "instances" && method === "POST") {
       const policy = saveInstance(
         event.locals,
         await requestBody(event.request),
+      );
+
+      return Response.json(
+        { revision: policy.revision, pending: true },
+        { status: 202 },
+      );
+    }
+
+    const instanceId = path?.match(/^instances\/([^/]+)$/)?.[1];
+
+    if (instanceId && method === "PUT") {
+      const policy = saveInstance(
+        event.locals,
+        await requestBody(event.request),
+        instanceId,
       );
 
       return Response.json(

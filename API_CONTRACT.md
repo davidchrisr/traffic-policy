@@ -28,8 +28,8 @@ restrict origins to loopback or private IPv4 addresses. Deployment uses HTTPS.
 | `/api/rules`                           | GET, POST   | List or create a rule                      |
 | `/api/rules/:id`                       | PUT, DELETE | Edit or remove a rule                      |
 | `/api/rules/:id/renew`                 | POST        | Explicit renewed duration                  |
-| `/api/instances`                       | GET, PUT    | List or upsert registered instances        |
-| `/api/instances/:id`                   | DELETE      | Remove an instance and its scoped rules    |
+| `/api/instances`                       | GET, POST   | List or create registered instances        |
+| `/api/instances/:id`                   | PUT, DELETE | Edit or remove an instance and its rules   |
 | `/api/settings`                        | GET, PUT    | Settings and resource usage                |
 | `/api/names/lookup`                    | POST        | PTR query for a registered address         |
 | `/api/monitor`                         | GET         | Selection/period-scoped service metrics    |
@@ -39,14 +39,16 @@ restrict origins to loopback or private IPv4 addresses. Deployment uses HTTPS.
 | `/api/history`                         | GET         | Retained audit, observations, health       |
 
 Rules, instances, and settings mutations require `expectedRevision`. A stale
-revision returns 409. Rule input excludes server-owned identity and
-creation/modification times. Unknown fields and invalid combinations return 400
-with field issues. A rule's `ports` is `null` for any port, or up to 64
-`{ start, end }` ranges within 1–65535, sorted, each start at most its end, and
-no two overlapping or adjacent. Ports require TCP, UDP, or any transport; with
-any transport they match TCP and UDP only. Accepted mutations return 202 and
-remain pending until the gateway confirms the new policy hash. Responses include
-the new revision except for instance removal, which returns
+revision returns 409, so a retried create whose first attempt succeeded is
+refused rather than repeated. Rule and instance input exclude server-owned
+identity, and rule input excludes creation/modification times; editing a rule or
+instance that no longer exists returns 404. Unknown fields and invalid
+combinations return 400 with field issues. A rule's `ports` is `null` for any
+port, or up to 64 `{ start, end }` ranges within 1–65535, sorted, each start at
+most its end, and no two overlapping or adjacent. Ports require TCP, UDP, or any
+transport; with any transport they match TCP and UDP only. Accepted mutations
+return 202 and remain pending until the gateway confirms the new policy hash.
+Responses include the new revision except for instance removal, which returns
 `{ "accepted": true }`.
 
 Removing an instance also removes its scoped rules and pending request rows;

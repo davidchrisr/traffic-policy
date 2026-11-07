@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
-  instanceSchema,
+  instanceInputSchema,
   ipSchema,
   ruleInputSchema,
   ruleSchema,
@@ -51,7 +51,7 @@ export const expectedRevisionSchema = z
   .strict();
 
 export const instanceMutationSchema = z
-  .object({ expectedRevision: uint64Schema, instance: instanceSchema })
+  .object({ expectedRevision: uint64Schema, instance: instanceInputSchema })
   .strict();
 
 export const settingsMutationSchema = z
@@ -153,15 +153,29 @@ export function withInstance(
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This authorized service validates raw request input with its mutation schema.
-export function saveInstance(requester: Requester, raw: unknown) {
+export function saveInstance(requester: Requester, raw: unknown, id?: string) {
   requireAdmin(requester.actor);
   const input = instanceMutationSchema.parse(raw);
+  const identity = id ? z.string().uuid().parse(id) : randomUUID();
 
   return store().mutation(
     input.expectedRevision,
-    "instance-updated",
-    input.instance.id,
-    (policy) => withInstance(policy, input.instance, new Date().toISOString()),
+    id ? "instance-updated" : "instance-created",
+    identity,
+    (policy) => {
+      if (id && !policy.instances.some((instance) => instance.id === identity))
+        throw new ServiceError(
+          404,
+          "instance_not_found",
+          "Instance no longer exists",
+        );
+
+      return withInstance(
+        policy,
+        { id: identity, ...input.instance },
+        new Date().toISOString(),
+      );
+    },
     requester.client,
   );
 }

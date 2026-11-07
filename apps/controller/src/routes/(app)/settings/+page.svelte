@@ -11,7 +11,10 @@
   import { latestStatus, liveStatus } from "#lib/live-status.ts";
   import { api, ApiError, displayBytes } from "#lib/client.ts";
   import { formatByteSize, parseByteSize } from "#lib/byte-size.ts";
-  import { instanceSchema, type Instance } from "@traffic-policy/contracts";
+  import {
+    instanceInputSchema,
+    type Instance,
+  } from "@traffic-policy/contracts";
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Input } from "#lib/components/ui/input/index.ts";
   import { Label } from "#lib/components/ui/label/index.ts";
@@ -313,7 +316,7 @@
 
   function editInstance(instance: Instance | null) {
     editing = instance !== null;
-    instanceId = instance?.id ?? newInstanceId();
+    instanceId = instance?.id ?? "";
     instanceRevision = model.revision;
     name = instance?.name ?? "";
     addresses = instance?.addresses.join(", ") ?? "";
@@ -323,25 +326,12 @@
     instanceOpen = true;
   }
 
-  function newInstanceId() {
-    const bytes = crypto.getRandomValues(new Uint8Array(16));
-    bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-    bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-
-    const hex = Array.from(bytes, (byte) =>
-      byte.toString(16).padStart(2, "0"),
-    ).join("");
-
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-  }
-
   async function saveInstance() {
     if (saving) return;
     instanceError = "";
     instanceFields = [];
 
-    const parsed = instanceSchema.safeParse({
-      id: instanceId,
+    const parsed = instanceInputSchema.safeParse({
       name,
       addresses: addresses.split(/[\s,]+/).filter(Boolean),
     });
@@ -360,10 +350,12 @@
     let accepted = false;
 
     try {
-      await api("instances", "PUT", {
-        expectedRevision: instanceRevision,
-        instance: parsed.data,
-      });
+      // The controller assigns a new instance's identity.
+      await api(
+        editing ? `instances/${instanceId}` : "instances",
+        editing ? "PUT" : "POST",
+        { expectedRevision: instanceRevision, instance: parsed.data },
+      );
       accepted = true;
       instanceOpen = false;
       name = "";
