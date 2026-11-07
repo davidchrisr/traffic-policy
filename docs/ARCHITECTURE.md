@@ -651,14 +651,17 @@ span, not a pairing of names with drops. The Requests page loads a linked host's
 Request even when it is older than the newest 500 Requests it lists.
 
 The controller retains pending requests in separate pools: 5,000 connection
-scopes, 5,000 DNS scopes, at most 500 of them per instance, and 1,000 host
-scopes, so lookups for many names cannot displace connection requests. Resolved
-rows are removed. Overflow retains the newest scopes of each pool by last
-observed time, with a stable identity tie-break, and records the discarded-scope
-count in the same SQLite transaction as removal. Request rows have separate
-logical accounting at 512 bytes per row; the runtime disk budget includes their
-actual database and index storage. Requests exposes retained and discarded
-counts, including after replay or restart.
+scopes, 5,000 DNS scopes, at most 500 of them per instance, and 10,000 host
+scopes, so lookups for many names cannot displace connection requests. Dismissed
+hosts are kept apart, up to 10,000, and are never removed for space, so a
+dismissal lasts until the host is restored or registered; at the limit,
+dismissing is refused. A dismissed host's drops update only its attempt count
+and last time. Resolved rows are removed. Overflow retains the newest scopes of
+each pool by last observed time, with a stable identity tie-break, and records
+the discarded-scope count in the same SQLite transaction as removal. Request
+rows have separate logical accounting at 512 bytes per row; the runtime disk
+budget includes their actual database and index storage. Requests exposes
+retained and discarded counts, including after replay or restart.
 
 Lifecycle records pin their endpoint instance mappings before entering the
 enforcement queue. Trace normalization uses the captured instance identity,

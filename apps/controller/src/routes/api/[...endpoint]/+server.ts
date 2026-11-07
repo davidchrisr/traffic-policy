@@ -5,12 +5,16 @@ import {
   ipSchema,
   ruleInputSchema,
 } from "@traffic-policy/contracts";
-import { monitorSelectionSchema } from "@traffic-policy/contracts/dashboard";
+import {
+  monitorSelectionSchema,
+  requestsViewSchema,
+} from "@traffic-policy/contracts/dashboard";
 import { removeInstance } from "#lib/server/services.ts";
 import { apiError, requestBody } from "#lib/server/api.ts";
 import {
   deleteRule,
   dismissHostRequest,
+  restoreHostRequest,
   expectedRevisionSchema,
   saveInstance,
   saveRule,
@@ -244,6 +248,9 @@ const handle: RequestHandler = async (event) => {
       return Response.json(
         store().requests(
           ipSchema.nullable().parse(event.url.searchParams.get("host")),
+          requestsViewSchema.parse(
+            event.url.searchParams.get("view") ?? "main",
+          ),
         ),
       );
 
@@ -253,6 +260,14 @@ const handle: RequestHandler = async (event) => {
       dismissHostRequest(event.locals, dismiss);
 
       return Response.json({ dismissed: true });
+    }
+
+    const restore = path?.match(/^requests\/hosts\/([^/]+)\/restore$/)?.[1];
+
+    if (restore && method === "POST") {
+      restoreHostRequest(event.locals, restore);
+
+      return Response.json({ restored: true });
     }
 
     const namesFor = path?.match(/^requests\/([^/]+)\/names$/)?.[1];

@@ -25,6 +25,7 @@ import {
   type GatewayEndpoint,
   gatewayEndpointSchema,
   type MonitorSelection,
+  type RequestsView,
   type RulesSnapshot,
   rulesSnapshotSchema,
   storageSnapshotSchema,
@@ -112,7 +113,11 @@ export const MAX_INSTANCE_DNS_REQUESTS = 500;
 
 // Hosts outside every instance whose drops arrived on a client interface, waiting for
 // registration.
-export const MAX_HOST_REQUESTS = 1000;
+export const MAX_HOST_REQUESTS = 10000;
+
+// Dismissed hosts are kept apart and never removed for space, so a dismissal never lapses; at the
+// limit, dismissing is refused.
+export const MAX_DISMISSED_HOSTS = 10000;
 
 export const MAX_PENDING_REQUESTS =
   MAX_CONNECTION_REQUESTS + MAX_DNS_REQUESTS + MAX_HOST_REQUESTS;
@@ -1083,57 +1088,73 @@ export class ControllerStore {
         ) {
           const old = this.database
             .prepare(
-              "SELECT attempts,first_at,last_at,destinations,names FROM host_requests WHERE client_ip=?",
+              "SELECT attempts,first_at,last_at,destinations,names,dismissed_at FROM host_requests WHERE client_ip=?",
             )
             .get(client.data);
 
           const blocked = event.type === "blocked";
 
-          // The Request starts at its first drop, which can arrive after later ones.
-          const firstDrop = blocked && (!old || at < String(old.first_at));
-          const first = firstDrop || !old ? at : String(old.first_at);
+          // A dismissed host keeps only how often and how recently it was dropped; its lookups and
+          // destinations stay as they were when it was dismissed.
+          if (old && old.dismissed_at !== null) {
+            if (blocked)
+              this.database
+                .prepare(
+                  "UPDATE host_requests SET attempts=?,last_at=MAX(last_at,?) WHERE client_ip=?",
+                )
+                .run(
+                  (BigInt(String(old.attempts)) + 1n).toString(),
+                  at,
+                  client.data,
+                );
+          } else {
+            // The Request starts at its first drop, which can arrive after later ones.
+            const firstDrop = blocked && (!old || at < String(old.first_at));
+            const first = firstDrop || !old ? at : String(old.first_at);
 
-          // A new first drop takes the lookups that may have arrived before the Request: stored ones
-          // from the lead before the drop on, including any seen after the drop but sent first.
-          const names =
-            event.type === "dns" && event.question
-              ? [{ value: event.question, at }]
-              : firstDrop
-                ? hostLookups(
-                    this.database,
-                    client.data,
-                    new Date(
-                      Date.parse(at) - HOST_LOOKUP_LEAD_MS,
-                    ).toISOString(),
-                    null,
-                  )
-                : [];
+            // A new first drop takes the lookups that may have arrived before the Request: stored
+            // ones from the lead before the drop on, including any seen after the drop but sent
+            // first.
+            const names =
+              event.type === "dns" && event.question
+                ? [{ value: event.question, at }]
+                : firstDrop
+                  ? hostLookups(
+                      this.database,
+                      client.data,
+                      new Date(
+                        Date.parse(at) - HOST_LOOKUP_LEAD_MS,
+                      ).toISOString(),
+                      null,
+                    )
+                  : [];
 
-          const last = [
-            at,
-            ...names.map((name) => name.at),
-            String(old?.last_at ?? at),
-          ].reduce((a, b) => (a > b ? a : b));
+            const last = [
+              at,
+              ...names.map((name) => name.at),
+              String(old?.last_at ?? at),
+            ].reduce((a, b) => (a > b ? a : b));
 
-          if (blocked || old)
-            this.database
-              .prepare(
-                "INSERT INTO host_requests(client_ip,attempts,first_at,last_at,destinations,names) VALUES(?,?,?,?,?,?) ON CONFLICT(client_ip) DO UPDATE SET attempts=excluded.attempts,first_at=excluded.first_at,last_at=excluded.last_at,destinations=excluded.destinations,names=excluded.names",
-              )
-              .run(
-                client.data,
-                (
-                  BigInt(String(old?.attempts ?? "0")) + (blocked ? 1n : 0n)
-                ).toString(),
-                first,
-                last,
-                blocked && event.peerIp
-                  ? latestValues(old?.destinations, [
-                      { value: event.peerIp, at },
-                    ])
-                  : String(old?.destinations ?? "[]"),
-                latestValues(old?.names, names),
-              );
+            if (blocked || old)
+              this.database
+                .prepare(
+                  "INSERT INTO host_requests(client_ip,attempts,first_at,last_at,destinations,names) VALUES(?,?,?,?,?,?) ON CONFLICT(client_ip) DO UPDATE SET attempts=excluded.attempts,first_at=excluded.first_at,last_at=excluded.last_at,destinations=excluded.destinations,names=excluded.names",
+                )
+                .run(
+                  client.data,
+                  (
+                    BigInt(String(old?.attempts ?? "0")) + (blocked ? 1n : 0n)
+                  ).toString(),
+                  first,
+                  last,
+                  blocked && event.peerIp
+                    ? latestValues(old?.destinations, [
+                        { value: event.peerIp, at },
+                      ])
+                    : String(old?.destinations ?? "[]"),
+                  latestValues(old?.names, names),
+                );
+          }
         }
 
         // Answer addresses are indexed in canonical form, matching request addresses, so the names
@@ -1565,6 +1586,7 @@ export class ControllerStore {
       const count = (sql: string, ...values: string[]) =>
         Number(this.database.prepare(sql).get(...values)!.count);
 
+      // `instanceId` limits DNS Requests to one instance; host Requests exclude dismissed hosts.
       const removeOldest = (
         table: "requests" | "dns_requests" | "host_requests",
         excess: number,
@@ -1573,9 +1595,16 @@ export class ControllerStore {
         if (excess <= 0) return 0;
         const id = table === "host_requests" ? "client_ip" : "id";
 
+        const where =
+          table === "host_requests"
+            ? " WHERE dismissed_at IS NULL"
+            : instanceId === undefined
+              ? ""
+              : " WHERE instance_id=?";
+
         this.database
           .prepare(
-            `DELETE FROM ${table} WHERE ${id} IN (SELECT ${id} FROM ${table}${instanceId === undefined ? "" : " WHERE instance_id=?"} ORDER BY julianday(last_at),${id} LIMIT ?)`,
+            `DELETE FROM ${table} WHERE ${id} IN (SELECT ${id} FROM ${table}${where} ORDER BY julianday(last_at),${id} LIMIT ?)`,
           )
           .run(...(instanceId === undefined ? [] : [instanceId]), excess);
 
@@ -1605,8 +1634,9 @@ export class ControllerStore {
       );
       discarded += removeOldest(
         "host_requests",
-        count("SELECT COUNT(*) AS count FROM host_requests") -
-          MAX_HOST_REQUESTS,
+        count(
+          "SELECT COUNT(*) AS count FROM host_requests WHERE dismissed_at IS NULL",
+        ) - MAX_HOST_REQUESTS,
       );
 
       if (discarded > 0)
@@ -1620,8 +1650,9 @@ export class ControllerStore {
           MAX_CONNECTION_REQUESTS &&
         count("SELECT COUNT(*) AS count FROM dns_requests") <
           MAX_DNS_REQUESTS &&
-        count("SELECT COUNT(*) AS count FROM host_requests") <
-          MAX_HOST_REQUESTS &&
+        count(
+          "SELECT COUNT(*) AS count FROM host_requests WHERE dismissed_at IS NULL",
+        ) < MAX_HOST_REQUESTS &&
         !this.database
           .prepare(
             "SELECT 1 FROM dns_requests GROUP BY instance_id HAVING COUNT(*) >= ? LIMIT 1",
@@ -1990,18 +2021,32 @@ export class ControllerStore {
       String(request.peer_ip),
     );
   }
-  requests(host: string | null = null) {
+  requests(host: string | null = null, view: RequestsView = "main") {
     return this.reads.requests(
       this.desired(),
       this.status(),
       MAX_PENDING_REQUESTS,
       host,
+      view,
     );
   }
-  // A dismissed host Request stops asking for review; the host's later drops still update it, and
-  // registering the host resolves it.
+  // A dismissed host Request stops asking for review until it is restored; the host's later drops
+  // still count, and registering the host resolves it.
   dismissHostRequest(clientIp: string, client: AuditClient | null = null) {
     this.transaction(() => {
+      const held = this.database
+        .prepare(
+          "SELECT COUNT(*) AS count FROM host_requests WHERE dismissed_at IS NOT NULL",
+        )
+        .get()!;
+
+      if (Number(held.count) >= MAX_DISMISSED_HOSTS)
+        throw new ServiceError(
+          409,
+          "dismissed_hosts_full",
+          `Dismissed host limit (${MAX_DISMISSED_HOSTS.toLocaleString("en-US")}) reached. Restore or register dismissed hosts, or register the network they come from.`,
+        );
+
       const dismissed = this.database
         .prepare(
           "UPDATE host_requests SET dismissed_at=? WHERE client_ip=? AND dismissed_at IS NULL",
@@ -2017,6 +2062,29 @@ export class ControllerStore {
       this.audit(
         "Admin",
         "host-request-dismissed",
+        clientIp,
+        client ? { client } : {},
+      );
+    });
+  }
+  // A restored host Request asks for review again.
+  restoreHostRequest(clientIp: string, client: AuditClient | null = null) {
+    this.transaction(() => {
+      const restored = this.database
+        .prepare(
+          "UPDATE host_requests SET dismissed_at=NULL WHERE client_ip=? AND dismissed_at IS NOT NULL",
+        )
+        .run(clientIp);
+
+      if (Number(restored.changes) === 0)
+        throw new ServiceError(
+          404,
+          "request_not_found",
+          "No dismissed host Request at this address",
+        );
+      this.audit(
+        "Admin",
+        "host-request-restored",
         clientIp,
         client ? { client } : {},
       );
@@ -2066,7 +2134,7 @@ export class ControllerStore {
         this.usage("host_requests")
       ).toString(),
       requestsLimitBytes: (
-        BigInt(MAX_PENDING_REQUESTS) * REQUEST_ROW_BYTES
+        BigInt(MAX_PENDING_REQUESTS + MAX_DISMISSED_HOSTS) * REQUEST_ROW_BYTES
       ).toString(),
       status: this.status(),
       storage: this.physicalBudget().status(),

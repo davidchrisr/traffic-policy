@@ -346,8 +346,14 @@ export const requestNamesSchema = z
 
 export type RequestNames = z.infer<typeof requestNamesSchema>;
 
+// The main list of Requests, or dismissed hosts only.
+export const requestsViewSchema = z.enum(["main", "dismissed"]);
+
+export type RequestsView = z.infer<typeof requestsViewSchema>;
+
 export const requestsSnapshotSchema = z
   .object({
+    view: requestsViewSchema,
     requests: z.array(reviewRequestSchema),
     // Current rules, so the rule editor can warn when another rule overrides a new one.
     rules: z.array(ruleSchema),

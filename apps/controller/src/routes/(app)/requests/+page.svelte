@@ -7,6 +7,7 @@
     requestNamesSchema,
     requestsSnapshotSchema,
     type RequestNames,
+    type RequestsView,
   } from "@traffic-policy/contracts/dashboard";
   import { RefreshRunner } from "#lib/refresh-runner.ts";
   import { api } from "#lib/client.ts";
@@ -46,6 +47,8 @@
   const separator = " · ";
 
   let model = $state.raw(untrack(() => data)),
+    // The last main-list snapshot, whose Applying and Failed counts stay shown while Dismissed is.
+    main = $state.raw(untrack(() => data)),
     filter = $state("needs-review"),
     selected = $state<string | null>(null),
     inspectorOpen = $state(false),
@@ -56,8 +59,20 @@
     editing = $state.raw<Rule | null>(null),
     amend = $state.raw<{ dnsDestinations: string[] } | null>(null);
 
+  // Only the selected tab's view is loaded: dismissed hosts or the main list.
+  const view = $derived<RequestsView>(
+    filter === "dismissed" ? "dismissed" : "main",
+  );
+
+  const ready = $derived(model.view === view);
+
+  // Pending Requests loaded in the main list, without a dismissed host a link adds.
+  const pendingShown = $derived(
+    model.requests.filter((request) => request.state !== "dismissed").length,
+  );
+
   const shown = $derived(
-    model.requests.filter((request) => request.state === filter),
+    ready ? model.requests.filter((request) => request.state === filter) : [],
   );
 
   const stateLabels: Record<(typeof data.requests)[number]["state"], string> = {
@@ -91,15 +106,15 @@
     { value: "dismissed", label: "Dismissed" },
   ] as const;
 
-  // Needs review uses the exact count; the list holds only the newest requests.
+  // Needs review uses the exact count; the list holds only the newest requests. Dismissed hosts ask
+  // for nothing, so their tab has no count.
   const counts = $derived({
     "needs-review": model.status.needsReview,
-    applying: model.requests.filter((request) => request.state === "applying")
+    applying: main.requests.filter((request) => request.state === "applying")
       .length,
-    failed: model.requests.filter((request) => request.state === "failed")
+    failed: main.requests.filter((request) => request.state === "failed")
       .length,
-    dismissed: model.requests.filter((request) => request.state === "dismissed")
-      .length,
+    dismissed: 0,
   });
 
   const sourceLabels: Record<RequestNames["names"][number]["source"], string> =
@@ -184,9 +199,36 @@
 
   let refreshing = $state(false);
 
+  // Installs a snapshot; a selected Request that is not in its view closes the inspector.
+  function install(next: typeof data) {
+    model = next;
+
+    if (next.view === "main") main = next;
+
+    const kept = next.requests.find((request) => request.id === selected);
+
+    if (
+      selected !== null &&
+      (!kept || (kept.state === "dismissed") !== (next.view === "dismissed"))
+    ) {
+      selected = null;
+      inspectorOpen = false;
+    }
+  }
+
+  // A tab that hides the selected Request closes the inspector.
+  function choose(tab: (typeof tabs)[number]["value"]) {
+    if (focused && focused.state !== tab) {
+      selected = null;
+      inspectorOpen = false;
+    }
+
+    filter = tab;
+  }
+
   const runner = new RefreshRunner<typeof data>({
     onValue: (next) => {
-      model = next;
+      install(next);
       error = "";
     },
     onError: () => {
@@ -211,14 +253,21 @@
       : null,
   );
 
+  // Loads the selected tab's view.
   function refresh(supersede = true) {
+    const query = new URLSearchParams();
+
+    if (view === "dismissed") query.set("view", "dismissed");
+
+    if (host !== null) query.set("host", host);
+
+    const search = query.toString();
+
     return runner.run(
       async (signal) =>
         requestsSnapshotSchema.parse(
           await api(
-            host === null
-              ? "requests"
-              : `requests?host=${encodeURIComponent(host)}`,
+            search ? `requests?${search}` : "requests",
             "GET",
             undefined,
             signal,
@@ -227,6 +276,18 @@
       supersede,
     );
   }
+
+  // Switching between the main list and dismissed hosts loads the selected view at once, or, when
+  // it is already loaded, drops a load still running for the other one. A failed load is retried
+  // by the next poll.
+  $effect(() => {
+    const wanted = view;
+
+    untrack(() => {
+      if (model.view === wanted) runner.cancel();
+      else void refresh();
+    });
+  });
 
   // Each load, including one for a link to another host from this page, replaces the Requests.
   // Monitor links here with an unregistered host: open its Request, which the load includes
@@ -237,7 +298,7 @@
     untrack(() => {
       // A poll still loading for the previous URL must not replace this load.
       runner.cancel();
-      model = next;
+      install(next);
 
       const linked = model.requests.find(
         (request) => request.kind === "host" && request.clientIp === host,
@@ -252,6 +313,9 @@
         selected = null;
         inspectorOpen = false;
       }
+
+      // A load holds the main list; with Dismissed selected, load that view instead.
+      if (model.view !== view) void refresh();
     });
   });
 
@@ -397,17 +461,18 @@
     }
   }
 
-  let dismissing = $state<string | null>(null);
+  let reviewing = $state<string | null>(null);
 
-  // A dismissed host stops asking for review; registering it still applies the rules.
-  async function dismiss(address: string) {
-    if (dismissing) return;
-    dismissing = address;
+  // A dismissed host stops asking for review until it is restored; registering it still applies the
+  // rules.
+  async function review(address: string, action: "dismiss" | "restore") {
+    if (reviewing) return;
+    reviewing = address;
     error = "";
 
     try {
       await api(
-        `requests/hosts/${encodeURIComponent(address)}/dismiss`,
+        `requests/hosts/${encodeURIComponent(address)}/${action}`,
         "POST",
         {},
       );
@@ -416,9 +481,9 @@
       error =
         failure instanceof Error
           ? failure.message
-          : "The host Request could not be dismissed";
+          : `The host Request could not be ${action === "dismiss" ? "dismissed" : "restored"}`;
     } finally {
-      dismissing = null;
+      reviewing = null;
     }
   }
 
@@ -461,7 +526,7 @@
           variant={filter === item.value ? "selected" : "ghost"}
           size="sm"
           aria-pressed={filter === item.value}
-          onclick={() => (filter = item.value)}
+          onclick={() => choose(item.value)}
           >{item.label}{#if counts[item.value]}<span class="muted numeric"
               >{counts[item.value].toLocaleString()}</span
             >{/if}</Button
@@ -472,7 +537,7 @@
         {missingHost} has no host Request. Registering the host or reaching the queue
         limit removes it.
       </p>{/if}
-    {#if model.retention.discarded !== "0"}<p
+    {#if view === "main" && ready && model.retention.discarded !== "0"}<p
         class="field-help mb-4"
         role="status"
       >
@@ -481,7 +546,7 @@
           ? "request was"
           : "requests were"} removed when the queue reached its limit.
       </p>{/if}
-    {#if model.retention.dnsOmitted !== "0"}<p
+    {#if view === "main" && ready && model.retention.dnsOmitted !== "0"}<p
         class="field-help mb-4"
         role="status"
       >
@@ -492,11 +557,16 @@
           ? "wasn't"
           : "weren't"} recorded.
       </p>{/if}
-    {#if model.retention.pending > model.requests.length}<p
+    {#if view === "main" && ready && model.retention.pending > pendingShown}<p
         class="field-help muted mb-4"
       >
-        Showing the newest {model.requests.length} of {model.retention.pending.toLocaleString()}
+        Showing the newest {pendingShown} of {model.retention.pending.toLocaleString()}
         pending requests.
+      </p>{/if}
+    {#if view === "dismissed" && shown.length >= 500}<p
+        class="field-help muted mb-4"
+      >
+        Showing the 500 most recently dropped dismissed hosts.
       </p>{/if}
     {#if shown.some((request) => request.kind === "host")}<section class="mb-4">
         <h2 class="section-title mb-2">Unregistered hosts</h2>
@@ -517,12 +587,19 @@
                   : "packets"}, sampled{#if request.names[0]}{separator}{request
                     .names[0].name}{/if}</span
               ></button
-            >{#if request.state === "needs-review"}<Button
-                variant="ghost"
-                size="sm"
-                disabled={dismissing === request.clientIp}
-                onclick={() => dismiss(request.clientIp)}>Dismiss</Button
-              >{/if}<Button
+            ><Button
+              variant="ghost"
+              size="sm"
+              disabled={reviewing === request.clientIp}
+              onclick={() =>
+                review(
+                  request.clientIp,
+                  request.state === "needs-review" ? "dismiss" : "restore",
+                )}
+              >{request.state === "needs-review"
+                ? "Dismiss"
+                : "Restore"}</Button
+            ><Button
               variant="outline"
               size="sm"
               onclick={() => register(request.clientIp)}>Register</Button
@@ -580,7 +657,7 @@
           </div>{/each}
       </section>{/each}
     {#if !shown.length}<div class="empty-state">
-        No requests in this view.
+        {ready ? "No requests in this view." : "Loading…"}
       </div>{/if}
   </section>
   <InspectorPanel label="Request inspector" bind:open={inspectorOpen}>
@@ -629,13 +706,17 @@
             onclick={() =>
               focused.kind === "host" && register(focused.clientIp)}
             >Register</Button
-          >{#if focused.state === "needs-review"}<Button
-              variant="outline"
-              disabled={dismissing === focused.clientIp}
-              onclick={() =>
-                focused.kind === "host" && dismiss(focused.clientIp)}
-              >Dismiss</Button
-            >{/if}
+          ><Button
+            variant="outline"
+            disabled={reviewing === focused.clientIp}
+            onclick={() =>
+              focused.kind === "host" &&
+              review(
+                focused.clientIp,
+                focused.state === "needs-review" ? "dismiss" : "restore",
+              )}
+            >{focused.state === "needs-review" ? "Dismiss" : "Restore"}</Button
+          >
         </div>
       </div>{:else if focused}<h2 class="section-title mb-4">
         {focused.kind === "dns" ? "Denied DNS lookup" : "Blocked attempt"}

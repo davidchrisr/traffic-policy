@@ -5,7 +5,9 @@ import { randomUUID } from "node:crypto";
 import {
   ControllerStore,
   MAX_CONNECTION_REQUESTS,
+  MAX_DISMISSED_HOSTS,
   MAX_DNS_REQUESTS,
+  MAX_HOST_REQUESTS,
   MAX_INSTANCE_DNS_REQUESTS,
   MAX_PENDING_REQUESTS,
 } from "./store.ts";
@@ -2567,27 +2569,109 @@ describe("subnet instances and unregistered hosts", () => {
     }
   });
 
-  it("dismisses a host Request from review while its later drops still update it", async () => {
+  it("dismisses a host Request until it is restored, counting only its later drops", async () => {
     const store = await subnetStore();
+    const later = new Date(Date.now() + 60000).toISOString();
 
     try {
       store.ingest(batch([dropped("10.20.0.5", "client")]));
       expect(store.status().needsReview).toBe(1);
       store.dismissHostRequest("10.20.0.5");
       expect(store.status().needsReview).toBe(0);
-      store.ingest(batch([dropped("10.20.0.5", "client")]));
-      expect(store.requests().requests).toMatchObject([
-        { kind: "host", state: "dismissed", attempts: "2" },
+      expect(store.requests().retention.pending).toBe(0);
+
+      // A dismissed host leaves the main list for the dismissed view, unless a link names it.
+      expect(store.requests().requests).toEqual([]);
+      expect(store.requests("10.20.0.5").requests).toMatchObject([
+        { state: "dismissed" },
+      ]);
+
+      const [before] = store.requests(null, "dismissed").requests;
+
+      // A later drop to another destination and a lookup change only the attempts and last time.
+      store.ingest(
+        batch([
+          {
+            ...dropped("10.20.0.5", "client", "198.51.100.9"),
+            observedAt: later,
+          },
+          {
+            ...retentionEvent(),
+            source: "suricata",
+            question: "after-dismissal.example",
+            details: { clientIp: "10.20.0.5", unregistered: "client" },
+          },
+        ]),
+      );
+      expect(store.requests(null, "dismissed").requests).toEqual([
+        { ...before, attempts: "2", lastAt: later },
       ]);
       expect(store.status().needsReview).toBe(0);
       expect(() => store.dismissHostRequest("10.20.0.5")).toThrow(
         "No host Request waits for review",
       );
-      expect(store.history().audit[0]).toMatchObject({
-        action: "host-request-dismissed",
-        subject: "10.20.0.5",
-      });
+      store.restoreHostRequest("10.20.0.5");
+      expect(store.requests().requests).toMatchObject([
+        { kind: "host", state: "needs-review", attempts: "2" },
+      ]);
+      expect(store.requests(null, "dismissed").requests).toEqual([]);
+      expect(store.status().needsReview).toBe(1);
+      expect(() => store.restoreHostRequest("10.20.0.5")).toThrow(
+        "No dismissed host Request",
+      );
+      expect(
+        store
+          .history()
+          .audit.slice(0, 2)
+          .map(({ action, subject }) => [action, subject]),
+      ).toEqual([
+        ["host-request-restored", "10.20.0.5"],
+        ["host-request-dismissed", "10.20.0.5"],
+      ]);
     } finally {
+      store.close();
+    }
+  });
+
+  it("keeps dismissed hosts out of the host pool and refuses dismissal at their limit", async () => {
+    const store = await subnetStore();
+    const sql = new DatabaseSync(store.path);
+
+    // Hosts fd00::<n>, older than any drop below, dismissed or waiting for review.
+    const hosts = (from: number, count: number, dismissed: boolean) =>
+      sql
+        .prepare(
+          "WITH RECURSIVE n(i) AS (SELECT ? UNION ALL SELECT i+1 FROM n WHERE i+1 < ?) INSERT INTO host_requests(client_ip,attempts,first_at,last_at,destinations,names,dismissed_at) SELECT printf('fd00::%x',i),'1','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z','[]','[]',? FROM n",
+        )
+        .run(from, from + count, dismissed ? "2026-01-01T00:00:00.000Z" : null);
+
+    const count = (where: string) =>
+      Number(
+        sql
+          .prepare(`SELECT COUNT(*) AS count FROM host_requests WHERE ${where}`)
+          .get()!.count,
+      );
+
+    try {
+      hosts(0, MAX_DISMISSED_HOSTS - 1, true);
+      hosts(MAX_DISMISSED_HOSTS, MAX_HOST_REQUESTS, false);
+      // A new host overfills the host pool, which removes its oldest waiting host, never a
+      // dismissed one.
+      store.ingest(batch([dropped("10.20.0.5", "client")]));
+      expect(count("dismissed_at IS NULL")).toBe(MAX_HOST_REQUESTS);
+      expect(count("dismissed_at IS NOT NULL")).toBe(MAX_DISMISSED_HOSTS - 1);
+      expect(store.requests().retention).toMatchObject({
+        pending: MAX_HOST_REQUESTS,
+        discarded: "1",
+      });
+      store.dismissHostRequest("10.20.0.5");
+      expect(() =>
+        store.dismissHostRequest(
+          `fd00::${(MAX_DISMISSED_HOSTS + 1).toString(16)}`,
+        ),
+      ).toThrow("Dismissed host limit (10,000) reached");
+    } finally {
+      sql.close();
       store.close();
     }
   });

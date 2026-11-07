@@ -204,6 +204,11 @@ export function dismissHostRequest(requester: Requester, address: string) {
   store().dismissHostRequest(ipSchema.parse(address), requester.client);
 }
 
+export function restoreHostRequest(requester: Requester, address: string) {
+  requireAdmin(requester.actor);
+  store().restoreHostRequest(ipSchema.parse(address), requester.client);
+}
+
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This authorized service validates raw request input with its mutation schema.
 export function removeInstance(requester: Requester, id: string, raw: unknown) {
   requireAdmin(requester.actor);

@@ -12,6 +12,7 @@ import {
   requestsSnapshotSchema,
   type DashboardStatus,
   type MonitorSelection,
+  type RequestsView,
 } from "@traffic-policy/contracts/dashboard";
 import { describeRule } from "@traffic-policy/core";
 import { gatewayServices } from "../rule-state.ts";
@@ -172,34 +173,41 @@ export class DashboardReads {
         }),
       );
   }
-  // The newest 500 Requests of every kind, and the host Request at `host` when it is older.
+  // One view of the Requests: the newest 500 of every kind except dismissed hosts, or the newest
+  // 500 dismissed hosts, which are kept apart so they never displace Requests. Either view adds
+  // the host Request at `host` when it is not among them.
   requests(
     policy: DashboardPolicy,
     status: DashboardStatus,
     limit: number,
     host: string | null,
+    view: RequestsView,
   ) {
-    const rows = this.database
-      .prepare(
-        "SELECT id,'connection' AS kind,instance_id,direction,peer_ip,protocol,port,NULL AS question,NULL AS query_type,attempts,first_at,last_at,rule_id,state,clients,NULL AS destinations,NULL AS names,julianday(last_at) AS time FROM requests WHERE state != ? UNION ALL SELECT id,'dns' AS kind,instance_id,NULL,NULL,NULL,NULL,question,query_type,attempts,first_at,last_at,rule_id,state,clients,NULL,NULL,julianday(last_at) AS time FROM dns_requests WHERE state != ? UNION ALL SELECT client_ip,'host' AS kind,NULL,NULL,client_ip,NULL,NULL,NULL,NULL,attempts,first_at,last_at,NULL,CASE WHEN dismissed_at IS NULL THEN 'needs-review' ELSE 'dismissed' END,NULL,destinations,names,julianday(last_at) AS time FROM host_requests ORDER BY time DESC,id DESC LIMIT 500",
-      )
-      .all("resolved", "resolved");
+    const hosts = (where: string) =>
+      this.database.prepare(
+        `SELECT client_ip AS id,'host' AS kind,client_ip AS peer_ip,attempts,first_at,last_at,CASE WHEN dismissed_at IS NULL THEN 'needs-review' ELSE 'dismissed' END AS state,destinations,names FROM host_requests WHERE ${where}`,
+      );
+
+    const rows =
+      view === "dismissed"
+        ? hosts(
+            "dismissed_at IS NOT NULL ORDER BY julianday(last_at) DESC,client_ip DESC LIMIT 500",
+          ).all()
+        : this.database
+            .prepare(
+              "SELECT id,'connection' AS kind,instance_id,direction,peer_ip,protocol,port,NULL AS question,NULL AS query_type,attempts,first_at,last_at,rule_id,state,clients,NULL AS destinations,NULL AS names,julianday(last_at) AS time FROM requests WHERE state != ? UNION ALL SELECT id,'dns' AS kind,instance_id,NULL,NULL,NULL,NULL,question,query_type,attempts,first_at,last_at,rule_id,state,clients,NULL,NULL,julianday(last_at) AS time FROM dns_requests WHERE state != ? UNION ALL SELECT client_ip,'host' AS kind,NULL,NULL,client_ip,NULL,NULL,NULL,NULL,attempts,first_at,last_at,NULL,CASE WHEN dismissed_at IS NULL THEN 'needs-review' ELSE 'dismissed' END,NULL,destinations,names,julianday(last_at) AS time FROM host_requests WHERE dismissed_at IS NULL ORDER BY time DESC,id DESC LIMIT 500",
+            )
+            .all("resolved", "resolved");
 
     if (
       host !== null &&
       !rows.some((row) => row.kind === "host" && row.id === host)
     )
-      rows.push(
-        ...this.database
-          .prepare(
-            "SELECT client_ip AS id,'host' AS kind,client_ip AS peer_ip,attempts,first_at,last_at,CASE WHEN dismissed_at IS NULL THEN 'needs-review' ELSE 'dismissed' END AS state,destinations,names FROM host_requests WHERE client_ip=?",
-          )
-          .all(host),
-      );
+      rows.push(...hosts("client_ip=?").all(host));
 
     const count = this.database
       .prepare(
-        "SELECT (SELECT COUNT(*) FROM requests WHERE state != 'resolved') + (SELECT COUNT(*) FROM dns_requests WHERE state != 'resolved') + (SELECT COUNT(*) FROM host_requests) AS count",
+        "SELECT (SELECT COUNT(*) FROM requests WHERE state != 'resolved') + (SELECT COUNT(*) FROM dns_requests WHERE state != 'resolved') + (SELECT COUNT(*) FROM host_requests WHERE dismissed_at IS NULL) AS count",
       )
       .get()!;
 
@@ -214,6 +222,7 @@ export class DashboardReads {
     const omitted = condition.get("dns_denials_omitted");
 
     return parseDashboard(requestsSnapshotSchema, {
+      view,
       retention: {
         pending: Number(count.count),
         limit,

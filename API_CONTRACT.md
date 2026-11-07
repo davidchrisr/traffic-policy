@@ -36,6 +36,7 @@ restrict origins to loopback or private IPv4 addresses. Deployment uses HTTPS.
 | `/api/requests`                        | GET         | Sampled catch-all denials and review state |
 | `/api/requests/:id/names`              | GET         | Names seen for a request's address         |
 | `/api/requests/hosts/:address/dismiss` | POST        | Stop a host Request asking for review      |
+| `/api/requests/hosts/:address/restore` | POST        | Ask for review of a dismissed host again   |
 | `/api/history`                         | GET         | Retained audit, observations, health       |
 
 Rules, instances, and settings mutations require `expectedRevision`. A stale
@@ -83,28 +84,35 @@ address), `attempts`, `firstAt`, `lastAt`, `destinations` (up to eight recent
 DNS queries), and `state` `needs-review` or `dismissed`; registering an address
 that covers it removes it. A Suricata query alone raises no host Request; it
 adds its name to one a drop raised. Dismissing a host Request removes it from
-the review count and audits the dismissal; later drops still update it. It
-returns 404 `request_not_found` when no host Request waits for review at the
-address. States are `needs-review`, `applying`, `failed`, and `resolved`.
-`requests` lists the newest 500 by `lastAt`; an optional `host` address adds the
-host Request at that address when it is older, and an invalid one returns 400.
-`retention` reports `pending`, the combined `limit` of the connection, DNS, and
-host pools, `discarded` and `lastDiscardedAt` for scopes removed at a pool
-limit, and `dnsOmitted` and `lastDnsOmittedAt` for denied lookups the gateway
-counted without recording each one. Requests and Monitor reads include the
-settings' `localNetworks`, so the dashboard evaluates hostname and domain rules
-only where they would admit an address as a DNS answer. A request's names list
-up to 20 hostnames, newest first, from DNS answers its instance received that
-contained the address (`dns`) and TLS or HTTP names on its connections to the
-address (`tls`, `http`), each with `lastSeenAt`; an unknown request returns 404.
-Every dashboard `status` includes `needsReview`, the number of requests waiting
-for review, and `gateway`: the gateway's own `addresses` and the parameters of
-its fixed accepts (DNS gate `dnsPort`, machine link `machinePort`,
-`controllerPort`, and `controllerAddresses`, and `upstreamDns`) as it last
-reported them, or null before its first report. A name lookup requires
-`instanceId` and one of its registered addresses. A disabled resolver
-returns 409. Lookup results distinguish resolved, not-found, ambiguous, and
-unavailable states; retained lookup status also reports expiry.
+the review count and audits the dismissal; later drops update only its
+`attempts` and `lastAt`, and its lookups change nothing. Dismissed hosts are
+kept apart from the host pool and never removed for space; at 10,000 dismissed
+hosts, dismissing returns 409 `dismissed_hosts_full`. Dismissing returns 404
+`request_not_found` when no host Request waits for review at the address.
+Restoring a dismissed host Request asks for its review again and audits it, or
+returns 404 `request_not_found` when the address has no dismissed host Request.
+States are `needs-review`, `applying`, `failed`, and `resolved`. `requests`
+lists one `view`: by default `main`, the newest 500 by `lastAt` except dismissed
+hosts, or with `view=dismissed` the newest 500 dismissed hosts; another `view`
+returns 400. An optional `host` address adds the host Request at that address
+when the view does not list it, and an invalid one returns 400. `retention`
+reports `pending`, which excludes dismissed hosts, the combined `limit` of the
+connection, DNS, and host pools, `discarded` and `lastDiscardedAt` for scopes
+removed at a pool limit, and `dnsOmitted` and `lastDnsOmittedAt` for denied
+lookups the gateway counted without recording each one. Requests and Monitor
+reads include the settings' `localNetworks`, so the dashboard evaluates hostname
+and domain rules only where they would admit an address as a DNS answer. A
+request's names list up to 20 hostnames, newest first, from DNS answers its
+instance received that contained the address (`dns`) and TLS or HTTP names on
+its connections to the address (`tls`, `http`), each with `lastSeenAt`; an
+unknown request returns 404. Every dashboard `status` includes `needsReview`,
+the number of requests waiting for review, and `gateway`: the gateway's own
+`addresses` and the parameters of its fixed accepts (DNS gate `dnsPort`, machine
+link `machinePort`, `controllerPort`, and `controllerAddresses`, and
+`upstreamDns`) as it last reported them, or null before its first report. A name
+lookup requires `instanceId` and one of its registered addresses. A disabled
+resolver returns 409. Lookup results distinguish resolved, not-found, ambiguous,
+and unavailable states; retained lookup status also reports expiry.
 
 Monitor filters accept instance, peer IP, domain, hostname, direction, protocol,
 service port, and a retained period within 180 days. Totals cover the full

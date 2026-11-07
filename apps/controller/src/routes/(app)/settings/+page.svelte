@@ -585,9 +585,8 @@
       </header>
       <div class="settings-section-body">
         <p class="field-help muted">
-          Pending requests: {displayBytes(model.requestsUsedBytes)} of {displayBytes(
-            model.requestsLimitBytes,
-          )}
+          Requests and dismissed hosts: {displayBytes(model.requestsUsedBytes)} of
+          {displayBytes(model.requestsLimitBytes)}
         </p>
         <p class="field-help muted">
           Controller runtime files: {displayBytes(model.storage.allocatedBytes)} of
