@@ -1,24 +1,23 @@
 # Verification
 
-Unit tests do not reach the gateway's kernel paths (nftables, conntrack, trace
-events, Suricata) or the browser. Check changes there end to end on a
-[development stack](../dev/docker/README.md): a controller, gateway, and routed
-client of your own. A stack tests application behavior, not the production
-install; verify install and hardening changes on a host with [Setup](SETUP.md).
+These recipes use the [development stack](../dev/docker/README.md). Run the
+commands from `dev/docker/` with the env file for the stack being checked. The
+examples use `.env.development`; substitute your filename:
 
-Run the commands from `dev/docker/` with your stack's env file. The examples use
-`.env`.
+```sh
+stack_env=.env.development
+```
 
 ## Start and check readiness
 
-Give the stack its own `COMPOSE_PROJECT_NAME`, `TP_BROWSER_PORT`, `TP_ORIGIN`,
-and subnets so it cannot collide with another. After changing source, rebuild
-and restart as the README describes; a running stack keeps the old build.
+[Configure](../dev/docker/README.md#configure-a-stack) and
+[start](../dev/docker/README.md#start) the stack. After changing source, rebuild
+and restart it as the README describes; a running stack keeps the old build.
 
 ```sh
-nerdctl compose --env-file .env ps -a
-nerdctl compose --env-file .env logs gateway | grep '"ready":true'
-nerdctl compose --env-file .env exec controller /src/dev/docker/inspect.sh status
+nerdctl compose --env-file "$stack_env" ps -a
+nerdctl compose --env-file "$stack_env" logs gateway | grep '"ready":true'
+nerdctl compose --env-file "$stack_env" exec controller /src/dev/docker/inspect.sh status
 ```
 
 The stack is ready when the ordered build and init commands returned status 0,
@@ -33,14 +32,14 @@ build and init containers are removed after they exit. `inspect.sh` also prints
 Use the browser at `TP_ORIGIN` as Admin, and generate traffic from the client:
 
 ```sh
-nerdctl compose --env-file .env exec client curl -s -m 3 -o /dev/null http://1.1.1.1/
-nerdctl compose --env-file .env exec client dig +time=2 +tries=1 example.com
+nerdctl compose --env-file "$stack_env" exec client curl -s -m 3 -o /dev/null http://1.1.1.1/
+nerdctl compose --env-file "$stack_env" exec client dig +time=2 +tries=1 example.com
 ```
 
 For each check, keep a screenshot of the result in the browser and a second
 observation of the same effect: `inspect.sh` output, the gateway log, or the
-gateway's nftables table. Save evidence outside the stack, since `down -v`
-removes its volumes.
+gateway's nftables table. Save evidence outside the stack's volumes, since
+`down -v` removes them.
 
 ## Recipes
 
@@ -54,15 +53,15 @@ removes its volumes.
 - **Rule ports reach nftables.** Add a rule with ports such as `443-1000, 321`
   for the client's instance. The gateway's table holds the set once
   `inspect.sh status` shows the new revision applied:
-  `nerdctl compose --env-file .env exec gateway nft list table inet traffic_policy | grep proto-dst`.
+  `nerdctl compose --env-file "$stack_env" exec gateway nft list table inet traffic_policy | grep proto-dst`.
 - **Unreadable saved policy file.** Write an invalid file as the gateway's
   account, then restart the gateway:
 
   ```sh
-  nerdctl compose --env-file .env exec gateway setpriv --reuid=traffic-policy \
+  nerdctl compose --env-file "$stack_env" exec gateway setpriv --reuid=traffic-policy \
     --regid=traffic-policy --init-groups \
     sh -c 'umask 077; printf "{" >/var/lib/traffic-policy/gateway/policy-apply.json'
-  nerdctl compose --env-file .env restart gateway
+  nerdctl compose --env-file "$stack_env" restart gateway
   ```
 
   The gateway logs `"step":"intent-read"`, renames the file to
@@ -89,6 +88,4 @@ removes its volumes.
 
 ## Clean up
 
-`nerdctl compose --env-file .env down -v` removes the stack's containers,
-networks, and volumes. Keep the shared `tp-dev-bun-cache` volume; every stack's
-dependency installs use it.
+See [Stop](../dev/docker/README.md#stop) for shutdown and volume removal.

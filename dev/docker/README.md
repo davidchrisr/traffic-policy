@@ -1,13 +1,34 @@
 # Development stack
 
-A controller, a gateway, and one routed client, built from your checkout with
-`nerdctl compose`, rootless included, so several developers or agents can each
-test against their own stack instead of a shared instance. It runs on x86-64
-hosts, matching the packaged Bun runtime.
+A controller, a gateway, and one routed client, built from the checkout with
+`nerdctl compose`, rootless included. Each stack has its own runtime data and
+networks; the dependency cache is shared. It runs on x86-64 hosts, matching the
+packaged Bun runtime.
 
-It tests application behavior. It does not test the production install: there is
-no systemd, and the units' ordering and sandboxing are replaced by the entry
-scripts here. Use [Setup](../../docs/SETUP.md) on a host or VM for that.
+Entry scripts replace systemd here, so the stack does not exercise installed
+units' ordering or sandboxing. Use [Setup](../../docs/SETUP.md) on a host or VM
+to verify those.
+
+## Configure a stack
+
+From this directory, copy `.env.example` to an ignored `.env.<name>` file. The
+examples use `.env.development`; substitute the filename for your stack. This
+command creates a new file without overwriting an existing one:
+
+```sh
+stack_env=.env.development
+(set -C; cat .env.example >"$stack_env")
+```
+
+Set `COMPOSE_PROJECT_NAME`, `TP_BROWSER_PORT`, `TP_UPSTREAM_SUBNET`, and
+`TP_CLIENTS_SUBNET` in that file. Independent stacks need distinct project names
+and browser ports, and nonoverlapping private subnets that also avoid the host's
+routes. The example allocations must be adjusted for the host.
+
+Set `TP_CONTROLLER_ADDRESS` within the upstream subnet and `TP_CLIENT_ADDRESS`
+within the clients subnet. Set `TP_ORIGIN` to match the browser address and
+port. Use this env file for every operation on the stack; in another shell, set
+`stack_env` to the same filename.
 
 ## Start
 
@@ -18,16 +39,15 @@ nerdctl volume create tp-dev-bun-cache
 ```
 
 Write Admin's password to a file outside the repository, readable only by you.
-Copy `.env.example` to `.env` (or to `.env.<name>` for each extra stack), set
-`TP_ADMIN_PASSWORD_FILE` to that file, and run this ordered sequence from this
-directory to start or rebuild the stack:
+Set `TP_ADMIN_PASSWORD_FILE` in your env file to that file, and run this ordered
+sequence from this directory to start or rebuild your stack:
 
 ```sh
-nerdctl compose --env-file .env down &&
-  nerdctl compose --env-file .env build &&
-  nerdctl compose --env-file .env run --rm -i=false build &&
-  nerdctl compose --env-file .env run --rm -i=false init &&
-  nerdctl compose --env-file .env up -d controller gateway client
+nerdctl compose --env-file "$stack_env" down &&
+  nerdctl compose --env-file "$stack_env" build &&
+  nerdctl compose --env-file "$stack_env" run --rm -i=false build &&
+  nerdctl compose --env-file "$stack_env" run --rm -i=false init &&
+  nerdctl compose --env-file "$stack_env" up -d controller gateway client
 ```
 
 `down` keeps the volumes. Building and initializing must succeed before the
@@ -57,19 +77,13 @@ recreates the runtime containers while keeping their volumes.
 The client routes through the gateway and resolves through its DNS gate:
 
 ```sh
-nerdctl compose --env-file .env exec client curl -sI https://example.com
-nerdctl compose --env-file .env exec client dig example.com
+nerdctl compose --env-file "$stack_env" exec client curl -sI https://example.com
+nerdctl compose --env-file "$stack_env" exec client dig example.com
 ```
 
 A fresh stack blocks everything, and the client is unregistered, so its first
 connections become a host Request. Register `TP_CLIENT_ADDRESS` to apply rules
 to it.
-
-## Several stacks
-
-Each stack on a host needs its own `COMPOSE_PROJECT_NAME`, `TP_BROWSER_PORT`,
-`TP_ORIGIN`, and subnets (`TP_UPSTREAM_SUBNET`, `TP_CLIENTS_SUBNET`, and the
-addresses inside them). Pass that stack's file with `--env-file`.
 
 ## Browser on another machine
 
@@ -80,12 +94,12 @@ addresses inside them). Pass that stack's file with `--env-file`.
 ## Stop
 
 ```sh
-nerdctl compose --env-file .env down -v
+nerdctl compose --env-file "$stack_env" down
 ```
 
-This removes the stack's containers, networks, and volumes, including its
-database. The shared `tp-dev-bun-cache` volume stays. Omit `-v` to keep the
-stack's data.
+This removes the stack's containers and networks, keeping its volumes and env
+file. Adding `-v` also removes its volumes, including the database. The external
+`tp-dev-bun-cache` volume stays.
 
 ## How it differs from a deployment
 
