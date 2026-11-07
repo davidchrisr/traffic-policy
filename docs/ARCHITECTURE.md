@@ -402,14 +402,17 @@ execution. Failed execution blocks cached acknowledgement; status reads
 confirmed counts throughout an in-flight transaction. Configured-policy
 operations may still materialize and rebuild the full state.
 
-Each incoming DNS UDP listener requests an 8 MiB receive buffer. Linux reports
-16 MiB per socket after bookkeeping. Configuring both IPv4 and IPv6 uses two UDP
-listeners. Install the packaged gateway sysctls before startup to permit this
-request. Startup binds both UDP/TCP listeners and verifies buffer sizing before
-it reports readiness; a clamped buffer fails startup explicitly. The default for
-unrelated sockets is unchanged. DNS admission remains bounded at 4096 active
-queries across all listeners; buffer capacity absorbs bursts before admission.
-The enforcement service reserves 32 separate control slots and allows 4160
+Each incoming DNS UDP listener requests `dnsReceiveBufferBytes`, 8 MiB by
+default; Linux reports twice that per socket after bookkeeping. Configuring both
+IPv4 and IPv6 uses two UDP listeners. The packaged gateway sysctls permit the
+default. Startup binds both UDP/TCP listeners and reads back the granted size
+before it reports readiness. A buffer the kernel caps lower, as
+`net.core.rmem_max` does in unprivileged containers, is kept: the gateway logs
+the requested and granted sizes and reports the `dns_receive_buffer` condition
+in its status until a restart receives the full size. The default for unrelated
+sockets is unchanged. DNS admission remains bounded at 4096 active queries
+across all listeners; buffer capacity absorbs bursts before admission. The
+enforcement service reserves 32 separate control slots and allows 4160
 connections for admitted work and incoming frames, with a 64 MiB aggregate frame
 budget. The application requests TCP DNS and enforcement Unix-socket listen
 backlogs matching their connection limits; effective backlogs also depend on Bun

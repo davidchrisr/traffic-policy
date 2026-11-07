@@ -845,6 +845,7 @@ export class ControllerStore {
     endpoint?: GatewayEndpoint;
     condition?: string | null;
     suricataCondition?: string | null;
+    dnsCondition?: string | null;
     storage?: {
       allocatedBytes: string;
       logicalBytes: string;
@@ -898,6 +899,7 @@ export class ControllerStore {
 
     update("gateway_coverage", value.condition ?? null);
     update("suricata_collection", value.suricataCondition ?? null);
+    update("dns_receive_buffer", value.dnsCondition ?? null);
     update("collector_delivery", value.collector?.deliveryError ?? null);
     update("collector_persistence", value.collector?.persistenceError ?? null);
     update("collector_coverage", value.collector?.coverageCondition ?? null);

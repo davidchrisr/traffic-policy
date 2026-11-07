@@ -61,6 +61,7 @@ export const gatewayHealthSchema = z.object({
   endpoint: gatewayEndpointSchema.optional(),
   condition: z.string().nullable().optional(),
   suricataCondition: z.string().nullable().optional(),
+  dnsCondition: z.string().nullable().optional(),
   storage: storageSnapshotSchema.optional(),
   collector: z
     .object({

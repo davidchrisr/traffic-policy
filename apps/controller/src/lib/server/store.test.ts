@@ -1413,6 +1413,31 @@ describe("controller contracts and persistence", () => {
       store.close();
     }
   });
+  it("keeps a capped DNS receive buffer active until the gateway reports the full size", async () => {
+    const store = await database();
+
+    try {
+      store.gatewayHealth({
+        dnsCondition: "DNS receive buffer is 4194304 bytes",
+      });
+
+      const active = () =>
+        store
+          .status()
+          .conditions.find(
+            (condition) => condition.code === "dns_receive_buffer",
+          );
+
+      expect(active()).toMatchObject({
+        message: "DNS receive buffer is 4194304 bytes",
+        recoveredAt: null,
+      });
+      store.gatewayHealth({ dnsCondition: null });
+      expect(active()?.recoveredAt).not.toBeNull();
+    } finally {
+      store.close();
+    }
+  });
   it("reports rejected DNS observations without classifying retained batches as lost", async () => {
     const store = await database();
 

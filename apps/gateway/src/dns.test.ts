@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { createSocket } from "node:dgram";
+import { expect, it, vi } from "vitest";
+import { createSocket, type Socket as DatagramSocket } from "node:dgram";
 import { createServer, createConnection, type Socket } from "node:net";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,7 +10,11 @@ import {
   type ResolutionReceipt,
 } from "@traffic-policy/contracts";
 import { ServiceError } from "@traffic-policy/core/io";
-import { startDnsGate, configureDnsReceiveBuffer } from "./dns.ts";
+import {
+  startDnsGate,
+  configureDnsReceiveBuffer,
+  dnsReceiveBuffers,
+} from "./dns.ts";
 import { CommandFrame } from "./command-frame.ts";
 import {
   DnsFailureDiagnostics,
@@ -283,6 +287,7 @@ async function fixture(
     controllerIdentity: "fixture-controller",
     dnsListenAddresses: ["127.0.0.1"],
     dnsPort: address.port,
+    dnsReceiveBufferBytes: 65536,
     upstreamDns: { address: "127.0.0.1", port: upstream.address().port },
     enforcementSocket: path,
     stateDirectory: directory,
@@ -1067,3 +1072,61 @@ it("preserves a TCP query while enforcement work outlasts the client idle timeou
     await f.close();
   }
 }, 12000);
+
+it("reports a receive buffer the kernel caps instead of failing", () => {
+  // Linux reports twice the granted SO_RCVBUF; this socket is granted at most 4 MiB.
+  let granted = 0;
+
+  const socket = {
+    setRecvBufferSize: (bytes: number) => {
+      granted = Math.min(bytes, 4194304);
+    },
+    getRecvBufferSize: () => granted * 2,
+  } as Pick<DatagramSocket, "setRecvBufferSize" | "getRecvBufferSize">;
+
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  try {
+    expect(configureDnsReceiveBuffer(socket, 4194304)).toBeNull();
+
+    const capped = configureDnsReceiveBuffer(socket, 8388608);
+
+    expect(capped).toContain("is 4194304 bytes, below the configured 8388608");
+    expect(capped).toContain("Raise net.core.rmem_max to 8388608");
+    expect(log).toHaveBeenCalledOnce();
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it("configures every DNS listener and reports the first capped one", () => {
+  const listener = (limit: number) => {
+    let granted = 0;
+
+    return {
+      requested: [] as number[],
+      setRecvBufferSize(bytes: number) {
+        this.requested.push(bytes);
+        granted = Math.min(bytes, limit);
+      },
+      getRecvBufferSize: () => granted * 2,
+    };
+  };
+
+  const sockets = [listener(4194304), listener(2097152), listener(8388608)];
+  const buffers = dnsReceiveBuffers(8388608);
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  try {
+    for (const socket of sockets) buffers.configure(socket);
+  } finally {
+    log.mockRestore();
+  }
+
+  expect(sockets.map((socket) => socket.requested)).toEqual([
+    [8388608],
+    [8388608],
+    [8388608],
+  ]);
+  expect(buffers.condition).toContain("is 4194304 bytes");
+});

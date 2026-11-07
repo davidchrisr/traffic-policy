@@ -12,6 +12,13 @@ export const gatewayConfigSchema = z
     controllerIdentity: z.string().min(1).max(128),
     dnsListenAddresses: z.array(ipSchema).min(1).max(32),
     dnsPort: z.number().int().min(1024).max(65535),
+    // Requested per UDP DNS listener; a kernel cap below it is reported, not fatal.
+    dnsReceiveBufferBytes: z
+      .number()
+      .int()
+      .min(65536)
+      .max(67108864)
+      .default(8388608),
     upstreamDns: z
       .object({ address: ipSchema, port: z.number().int().min(1).max(65535) })
       .strict(),

@@ -21,7 +21,7 @@ import {
   enforcementRequest,
   closeEnforcementConnections,
 } from "./enforcement-client.ts";
-import { startDnsGate } from "./dns.ts";
+import { dnsReceiveBuffers, startDnsGate } from "./dns.ts";
 import { finishShutdown, PendingWork } from "./shutdown.ts";
 import { GatewayPolicy } from "./gateway-policy.ts";
 import { readServiceStatus } from "@traffic-policy/core/systemd";
@@ -252,6 +252,10 @@ export async function startGateway(configPath: string): Promise<void> {
     buffer.append([{ ...emptyEvent(), details }]),
   );
 
+  // Every DNS listener's receive buffer; a cap below the configured size stays in status until a
+  // restart receives the full size.
+  const receiveBuffers = dnsReceiveBuffers(config.dnsReceiveBufferBytes);
+
   const stopDns = await startDnsGate(
     config,
     recordDns,
@@ -268,6 +272,9 @@ export async function startGateway(configPath: string): Promise<void> {
         throw error;
       }
     },
+    undefined,
+    undefined,
+    receiveBuffers.configure,
   );
 
   const denialTimer = setInterval(() => {
@@ -334,6 +341,7 @@ export async function startGateway(configPath: string): Promise<void> {
               }),
               collector: buffer.status(),
               condition,
+              dnsCondition: receiveBuffers.condition,
               suricataCondition: await (async () => {
                 try {
                   const capture = JSON.parse(

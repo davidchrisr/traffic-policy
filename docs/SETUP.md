@@ -100,6 +100,11 @@ hostnames and interface names for your network.
   install `traffic-policy-modules.conf` in `/etc/modules-load.d/`. Apply both
   with `systemctl restart systemd-modules-load systemd-sysctl`. Keep management
   access independent of the managed client path.
+- Each UDP DNS listener requests `dnsReceiveBufferBytes` (default 8 MiB) in
+  `gateway.json`; the packaged `net.core.rmem_max` permits the default. Raise
+  both together for higher DNS rates. A host that caps the buffer lower, such as
+  an unprivileged container, still runs and reports the `dns_receive_buffer`
+  condition with the size it received; lower the setting there to clear it.
 
 Machine ports are 9443 on the gateway and 9445 on the controller. Permit them
 between those hosts. The browser uses 9444. Bind addresses must exist on the

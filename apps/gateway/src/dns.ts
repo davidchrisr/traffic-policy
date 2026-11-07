@@ -39,22 +39,50 @@ const UPSTREAM_TIMEOUT_MS = 2000;
 
 const DNS_QUERY_LIMIT = 4096;
 
-export const DNS_RECEIVE_BUFFER_BYTES = 8 * 1024 * 1024;
+// Approved fallback: a listener the kernel caps below `requestedBytes` (net.core.rmem_max, which
+// unprivileged containers cannot raise) keeps the smaller buffer. The cap is logged and returned as
+// a condition message; null means the full size was granted.
+type ReceiveBufferSocket = Pick<
+  DatagramSocket,
+  "setRecvBufferSize" | "getRecvBufferSize"
+>;
 
 export function configureDnsReceiveBuffer(
-  socket: DatagramSocket,
-  requestedBytes = DNS_RECEIVE_BUFFER_BYTES,
-) {
+  socket: ReceiveBufferSocket,
+  requestedBytes: number,
+): string | null {
   socket.setRecvBufferSize(requestedBytes);
-  const actual = socket.getRecvBufferSize();
+  // Linux reports twice SO_RCVBUF's granted value.
+  const granted = socket.getRecvBufferSize() / 2;
 
-  // The Linux gateway reports twice SO_RCVBUF's requested value.
-  if (actual < requestedBytes * 2)
-    throw new ServiceError(
-      503,
-      "dns_receive_buffer_clamped",
-      `DNS receive buffer is ${actual} bytes; expected at least ${requestedBytes * 2}. Raise net.core.rmem_max to ${requestedBytes}.`,
-    );
+  if (granted >= requestedBytes) return null;
+
+  console.error(
+    JSON.stringify({
+      service: "resolver-gate",
+      step: "receive-buffer",
+      requestedBytes,
+      grantedBytes: granted,
+    }),
+  );
+
+  return `DNS receive buffer is ${granted} bytes, below the configured ${requestedBytes}; DNS bursts may be dropped before admission. Raise net.core.rmem_max to ${requestedBytes} and restart the gateway.`;
+}
+
+// Configures every listener's receive buffer and keeps the first cap for gateway status, which
+// reports it until a restart receives the full size.
+export function dnsReceiveBuffers(requestedBytes: number) {
+  let condition: string | null = null;
+
+  return {
+    configure(socket: ReceiveBufferSocket) {
+      const capped = configureDnsReceiveBuffer(socket, requestedBytes);
+      condition ??= capped;
+    },
+    get condition() {
+      return condition;
+    },
+  };
 }
 
 function dnsRefused(query: Packet): Buffer {
@@ -167,9 +195,8 @@ export async function startDnsGate(
     undefined,
     "resolver-observation",
   ),
-  configureReceiveBuffer: (
-    socket: DatagramSocket,
-  ) => void = configureDnsReceiveBuffer,
+  configureReceiveBuffer: (socket: DatagramSocket) => void = (socket) =>
+    configureDnsReceiveBuffer(socket, config.dnsReceiveBufferBytes),
 ) {
   let active = 0;
   let stopped = false;
