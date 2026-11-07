@@ -1,5 +1,5 @@
-import { dirname, join } from "node:path";
-import { open, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { open, rename, unlink } from "node:fs/promises";
 import { z } from "zod";
 import {
   policySchema,
@@ -18,6 +18,7 @@ import {
 } from "@traffic-policy/core/io";
 import { StorageBudget, GATEWAY_RESERVE } from "@traffic-policy/core/storage";
 import { EventBuffer } from "./buffer.ts";
+import { emptyEvent } from "./telemetry.ts";
 import type { PolicyView } from "./eve.ts";
 import { CollectorWriter } from "./collector-writer.ts";
 import { enforcementRequest } from "./enforcement-client.ts";
@@ -248,10 +249,50 @@ export class GatewayPolicy {
     try {
       this.intent = await readJson(this.path, intentSchema);
     } catch (error) {
-      if (!hasErrorCode(error, "ENOENT")) throw error;
+      if (error instanceof SyntaxError || error instanceof z.ZodError)
+        await this.setAside(error);
+      else if (!hasErrorCode(error, "ENOENT")) throw error;
     }
 
     this.loaded = true;
+  }
+  // Approved fallback: a saved application this build cannot parse (a saved-format change, or
+  // damage) is renamed aside and reported once instead of failing every request. Enforcement keeps
+  // its own journal, and the controller resends when enforcement's receipt differs from its policy.
+  private async setAside(error: SyntaxError | z.ZodError) {
+    const issue = error instanceof z.ZodError ? error.issues[0] : undefined;
+
+    const reason = issue
+      ? `${issue.path.join(".") || "document"}: ${issue.message}`
+      : error.message;
+
+    const aside = `${this.path}.unreadable-${new Date().toISOString().replace(/[-:]/g, "")}`;
+
+    console.error(
+      JSON.stringify({
+        service: "gateway",
+        step: "intent-read",
+        error: reason,
+      }),
+    );
+    // Recorded before the rename, so a failed rename leaves the file to report again. A momentary
+    // condition carries both `occurrences` and `recovered`, so the controller lists it as recovered.
+    await this.buffer.append([
+      {
+        ...emptyEvent(),
+        details: {
+          code: "gateway_intent_unreadable",
+          message:
+            `Saved policy application could not be read and was set aside as ${basename(aside)}: ${reason}`.slice(
+              0,
+              4096,
+            ),
+          occurrences: 1,
+          recovered: true,
+        },
+      },
+    ]);
+    await rename(this.path, aside);
   }
   private confirm(policy: Policy, hash: string): boolean {
     if (this.confirmed) {

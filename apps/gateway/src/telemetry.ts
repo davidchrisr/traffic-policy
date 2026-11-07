@@ -325,6 +325,24 @@ export class UnregisteredNameSampler {
   }
 }
 
+// A gateway condition event; callers fill in `details`.
+export const emptyEvent = (): GatewayEvent => ({
+  id: randomUUID(),
+  observedAt: new Date().toISOString(),
+  type: "condition",
+  instanceId: null,
+  direction: null,
+  peerIp: null,
+  protocol: null,
+  port: null,
+  sentBytes: "0",
+  receivedBytes: "0",
+  ruleId: null,
+  question: null,
+  source: "gateway",
+  details: {},
+});
+
 // Reports the denials the rate limits left out as one momentary condition. The count is taken off
 // only once the event is stored, so a failed append is reported with the next one. A report asked
 // for while another is in progress shares it.

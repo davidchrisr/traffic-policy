@@ -1,7 +1,6 @@
 import { hasErrorCode } from "@traffic-policy/core/io";
 import { createMachineServer } from "@traffic-policy/core/machine-server";
 import { readFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { TLSSocket } from "node:tls";
 import { z } from "zod";
@@ -33,6 +32,7 @@ import {
   DnsDenialSampler,
   LostDenialReporter,
   TrafficAccounting,
+  emptyEvent,
 } from "./telemetry.ts";
 import { EveReader } from "./eve.ts";
 import { CollectionCommit } from "./collection.ts";
@@ -43,23 +43,6 @@ import {
   type BlockCounterReading,
   type BlockedCountState,
 } from "./blocked-counts.ts";
-
-const emptyEvent = (): GatewayEvent => ({
-  id: randomUUID(),
-  observedAt: new Date().toISOString(),
-  type: "condition",
-  instanceId: null,
-  direction: null,
-  peerIp: null,
-  protocol: null,
-  port: null,
-  sentBytes: "0",
-  receivedBytes: "0",
-  ruleId: null,
-  question: null,
-  source: "gateway",
-  details: {},
-});
 
 // The enforcement service exempts its configured DNS port, machine link, and upstream resolver from
 // managed policy. A mismatch would leave managed clients unable to reach this DNS gate, the

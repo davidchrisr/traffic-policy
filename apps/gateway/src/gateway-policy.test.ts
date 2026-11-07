@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   mkdtemp,
   readFile,
+  readdir,
   mkdir,
   rm,
   unlink,
@@ -923,6 +924,77 @@ it.each(["native-started", "native-committed"])(
     ).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+it.each([
+  ["invalid JSON", "{", "Saved policy application could not be read"],
+  [
+    "an earlier format",
+    JSON.stringify({
+      version: 1,
+      policy: {},
+      phase: "prepared",
+      receipt: null,
+    }),
+    "policy.protocolVersion:",
+  ],
+  [
+    "an oversized diagnostic",
+    JSON.stringify({
+      version: 1,
+      policy: policy(),
+      phase: "prepared",
+      receipt: null,
+      ["x".repeat(5000)]: true,
+    }),
+    "document:",
+  ],
+])(
+  "sets aside a saved application in %s and reports it once",
+  async (_case, saved, message) => {
+    const initial = policy();
+    const f = await fixture(initial);
+    await f.buffer.close();
+    await writeFile(join(f.directory, "policy-apply.json"), saved);
+
+    const opened = await GatewayPolicy.open(f.config, {
+      request: f.client,
+      createBuffer: f.createBuffer,
+    });
+
+    const append = vi.spyOn(opened.buffer, "append");
+    await opened.owner.health();
+    expect(append).toHaveBeenCalledOnce();
+    expect(append.mock.calls[0]![0][0]!.details).toMatchObject({
+      code: "gateway_intent_unreadable",
+      message: expect.stringContaining(message),
+      occurrences: 1,
+      recovered: true,
+    });
+    expect(
+      String(append.mock.calls[0]![0][0]!.details.message).length,
+    ).toBeLessThanOrEqual(4096);
+
+    const aside = (await readdir(f.directory)).filter((name) =>
+      name.startsWith("policy-apply.json.unreadable-"),
+    );
+
+    expect(aside).toHaveLength(1);
+    expect(await readFile(join(f.directory, aside[0]!), "utf8")).toBe(saved);
+    await expect(
+      readFile(join(f.directory, "policy-apply.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    await opened.owner.apply({ ...initial, revision: "2" });
+    expect(opened.owner.confirmedView()?.policy.revision).toBe("2");
+    expect(append).toHaveBeenCalledOnce();
+  },
+);
+
+it("keeps failing on a saved application it cannot read from disk", async () => {
+  const f = await fixture(policy());
+  await mkdir(join(f.directory, "policy-apply.json"));
+  await expect(f.owner.health()).rejects.toMatchObject({ code: "EISDIR" });
+});
 
 it.each(["eviction intent", "unlink", "directory sync", "eviction completion"])(
   "retains native confirmation and the gateway obligation after a real %s failure",

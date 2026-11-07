@@ -196,7 +196,16 @@ hashes and older revisions are rejected. An identical revision checks confirmed
 policy identity and returns its receipt without reinstallation or kernel
 inspection. Collector trimming happens after native confirmation. External
 filesystem failures can leave a revision pending until recovery completes; the
-gateway does not acknowledge it early.
+gateway does not acknowledge it early. A `policy-apply.json` that is not valid
+JSON or does not match the current format, such as after a release changes it,
+is renamed with an `.unreadable-<UTC time>` suffix and recorded once as a
+recovered `gateway_intent_unreadable` condition. The gateway then has no pending
+application: enforcement keeps its own journal, the next status read restores
+the confirmed policy, quotas and collector allocation, and the controller
+resends when enforcement's receipt differs from its desired policy. This
+requires compatible controller state; it does not migrate the controller
+database. Stored-format changes before deployment can require manually repairing
+or recreating test state. Other read failures still fail the request.
 
 `GatewayPolicy` owns application recovery, enforcement-confirmed policy,
 disk-budget transitions and collector-allocation synchronization. Bootstrap

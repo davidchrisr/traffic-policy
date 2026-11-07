@@ -238,10 +238,15 @@ the new outputs the same way as above, then restart `tp-enforcement` followed by
 `tp-gateway`, or both `tp-controller` and `tp-controller-machine` on the
 controller.
 
-A release can change the saved policy format. The new enforcement service then
-cannot restore its saved policy and reports `enforcement_restore_failed`; the
-controller resends its desired policy within two seconds and enforcement
-resumes. Until then:
+If the controller's desired policy is compatible but the enforcement service
+cannot restore its saved policy, it reports `enforcement_restore_failed`. The
+controller resends its desired policy and enforcement resumes once it applies.
+The gateway likewise sets aside a pending application it cannot parse as
+`/var/lib/traffic-policy/gateway/policy-apply.json.unreadable-<UTC time>`,
+records a recovered `gateway_intent_unreadable` condition, and waits for the
+controller instead of finishing that application itself. Each set-aside file is
+kept for inspection; remove it once it is no longer needed. Until the controller
+delivers:
 
 - After an enforcement service restart, the previously installed firewall table
   keeps enforcing, but new DNS lookups for hostname rules fail.
