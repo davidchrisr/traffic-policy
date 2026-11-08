@@ -76,7 +76,9 @@ async function fixture(
     recursive: true,
   });
 
-  const directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/unit-"));
+  const directory = await mkdtemp(
+    join(process.cwd(), ".local/tmp/tests/unit-"),
+  );
 
   directories.push(directory);
 
@@ -624,7 +626,9 @@ it("waits for initialization without publishing a synthetic policy", async () =>
     recursive: true,
   });
 
-  const directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/unit-"));
+  const directory = await mkdtemp(
+    join(process.cwd(), ".local/tmp/tests/unit-"),
+  );
 
   directories.push(directory);
 
@@ -1328,7 +1332,9 @@ it("bounds expanded DNS memory before allocating a multiplied permission set", (
 }, 15000);
 
 it("withholds an answer when a scheduled DNS Block takes effect during its install", async () => {
-  const directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/unit-"));
+  const directory = await mkdtemp(
+    join(process.cwd(), ".local/tmp/tests/unit-"),
+  );
 
   directories.push(directory);
 

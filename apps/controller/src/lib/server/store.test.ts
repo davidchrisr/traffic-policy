@@ -68,7 +68,9 @@ afterEach(() => {
 });
 
 async function database() {
-  const directory = mkdtempSync(join(process.cwd(), ".local/tmp/tests/store-test-"));
+  const directory = mkdtempSync(
+    join(process.cwd(), ".local/tmp/tests/store-test-"),
+  );
 
   directories.push(directory);
 

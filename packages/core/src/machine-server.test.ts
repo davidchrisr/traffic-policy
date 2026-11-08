@@ -30,7 +30,9 @@ let rogueCert: Buffer;
 let rogueKey: Buffer;
 
 beforeAll(async () => {
-  directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/machine-tls-"));
+  directory = await mkdtemp(
+    join(process.cwd(), ".local/tmp/tests/machine-tls-"),
+  );
 
   const openssl = (...args: string[]) => {
     const result = spawnSync("openssl", args, {

@@ -83,7 +83,9 @@ it("does not enable forwarding when policy presence cannot be checked", async ()
 });
 
 it("prevents a paused guard check from installing after the enforcement service replaces policy", async () => {
-  const path = await mkdtemp(join(process.cwd(), ".local/tmp/tests/guard-race-"));
+  const path = await mkdtemp(
+    join(process.cwd(), ".local/tmp/tests/guard-race-"),
+  );
 
   const installation = <T>(action: () => Promise<T>) =>
     withInstallationLock(action, path);

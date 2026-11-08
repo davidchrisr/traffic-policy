@@ -1248,7 +1248,9 @@ async function fixture(
     recursive: true,
   });
 
-  const root = await mkdtemp(join(process.cwd(), ".local/tmp/tests/buffer-test-"));
+  const root = await mkdtemp(
+    join(process.cwd(), ".local/tmp/tests/buffer-test-"),
+  );
 
   roots.push(root);
 

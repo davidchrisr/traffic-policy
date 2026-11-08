@@ -152,7 +152,9 @@ describe("connection marks", () => {
   });
 
   it("reads missing state as empty and names the file when it is unreadable", async () => {
-    const directory = await mkdtemp(join(process.cwd(), ".local/tmp/tests/marks-"));
+    const directory = await mkdtemp(
+      join(process.cwd(), ".local/tmp/tests/marks-"),
+    );
 
     directories.push(directory);
     const store = fileMarkStore(directory);
