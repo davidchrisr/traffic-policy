@@ -9,6 +9,7 @@ import {
   historySnapshotSchema,
   monitorSnapshotSchema,
   requestNamesSchema,
+  requestSuggestionsSchema,
   requestsSnapshotSchema,
   type DashboardStatus,
   type MonitorSelection,
@@ -70,6 +71,14 @@ const auditClientSchema = z.object({
 
 // A Request keeps the most recent distinct clients that hit it, newest first.
 export const RECENT_CLIENTS = 8;
+
+// Hostname suggestions read answers from this long before each client's latest attempt, at most
+// this many answers per client, and return at most this many names.
+export const SUGGESTION_WINDOW_MS = 5 * 60_000;
+
+export const SUGGESTION_SCAN_LIMIT = 10_000;
+
+const MAX_SUGGESTIONS = 20;
 
 // A stored recent list, newest first and distinct, JSON [{ value, at }].
 const recentSchema = z
@@ -324,6 +333,58 @@ export class DashboardReads {
       names: [...names.values()]
         .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))
         .slice(0, 20),
+    });
+  }
+  // Hostnames from confirmed resolver-gate answers that resolved each client's lookups to the
+  // address. Only the client's indexed answers are read, up to the scan limit, before their events
+  // are joined and grouped by name.
+  requestSuggestions(
+    instanceId: string,
+    peerIp: string,
+    clients: { address: string; at: string }[],
+  ) {
+    const statement = this.database.prepare(
+      `WITH matched AS MATERIALIZED (SELECT event_id,at FROM dns_answers WHERE instance_id=? AND address=? AND suggestion_client_ip=? AND at>=? AND at<=? ORDER BY at DESC LIMIT ${SUGGESTION_SCAN_LIMIT + 1}) SELECT events.question AS question,MAX(matched.at) AS at,(SELECT COUNT(*) FROM matched) AS scanned FROM matched JOIN events ON events.id=matched.event_id GROUP BY events.question ORDER BY at DESC LIMIT ${MAX_SUGGESTIONS + 1}`,
+    );
+
+    const latest = new Map<string, string>();
+    let complete = true;
+
+    for (const client of clients) {
+      const earliest = new Date(
+        Date.parse(client.at) - SUGGESTION_WINDOW_MS,
+      ).toISOString();
+
+      const rows = statement.all(
+        instanceId,
+        peerIp,
+        client.address,
+        earliest,
+        client.at,
+      );
+
+      if (
+        rows.length > MAX_SUGGESTIONS ||
+        Number(rows[0]?.scanned ?? 0) > SUGGESTION_SCAN_LIMIT
+      )
+        complete = false;
+
+      for (const row of rows) {
+        const name = nameSchema.safeParse(row.question);
+        const at = String(row.at);
+
+        if (name.success && (latest.get(name.data) ?? "") < at)
+          latest.set(name.data, at);
+      }
+    }
+
+    const hostnames = [...latest]
+      .sort((a, b) => b[1].localeCompare(a[1]))
+      .map(([name]) => name);
+
+    return parseDashboard(requestSuggestionsSchema, {
+      hostnames: hostnames.slice(0, MAX_SUGGESTIONS),
+      complete: complete && hostnames.length <= MAX_SUGGESTIONS,
     });
   }
   history(limit: number, policy: DashboardPolicy, status: DashboardStatus) {

@@ -35,6 +35,7 @@ restrict origins to loopback or private IPv4 addresses. Deployment uses HTTPS.
 | `/api/monitor`                         | GET         | Selection/period-scoped service metrics    |
 | `/api/requests`                        | GET         | Sampled catch-all denials and review state |
 | `/api/requests/:id/names`              | GET         | Names seen for a request's address         |
+| `/api/requests/:id/suggestions`        | GET         | Hostnames for a connection request's rule  |
 | `/api/requests/hosts/:address/dismiss` | POST        | Stop a host Request asking for review      |
 | `/api/requests/hosts/:address/restore` | POST        | Ask for review of a dismissed host again   |
 | `/api/history`                         | GET         | Retained audit, observations, health       |
@@ -67,6 +68,11 @@ reads report `historyUsedBytes` as an object with `traffic`, `dns`, `blocked`,
 and `other` decimal strings. Rule reads include `blocked` for Block rules:
 `packets` counted in the last 24 hours across instances and `samplesSince`, the
 oldest retained sample or `null`; it is `null` for Allow rules.
+
+Settings require `dnsReleaseMode`: `before-approval` releases validated DNS
+answers for registered clients before connection approval; `require-allow`
+requires an effective outgoing Allow. Connection rules apply in both modes. The
+example settings use `before-approval`.
 
 Renewal requires `durationSeconds`, counted from now; expiry never silently
 becomes permanent. Requests reads include the current `rules` so the editor can
@@ -105,14 +111,26 @@ and domain rules only where they would admit an address as a DNS answer. A
 request's names list up to 20 hostnames, newest first, from DNS answers its
 instance received that contained the address (`dns`) and TLS or HTTP names on
 its connections to the address (`tls`, `http`), each with `lastSeenAt`; an
-unknown request returns 404. Every dashboard `status` includes `needsReview`,
-the number of requests waiting for review, and `gateway`: the gateway's own
-`addresses` and the parameters of its fixed accepts (DNS gate `dnsPort`, machine
-link `machinePort`, `controllerPort`, and `controllerAddresses`, and
-`upstreamDns`) as it last reported them, or null before its first report. A name
-lookup requires `instanceId` and one of its registered addresses. A disabled
-resolver returns 409. Lookup results distinguish resolved, not-found, ambiguous,
-and unavailable states; retained lookup status also reports expiry.
+unknown request returns 404. A connection request's suggestions list up to 20
+distinct `hostnames`, newest first, from confirmed resolver-gate answers that
+resolved each of its clients' lookups to the address within five minutes before
+that client's latest attempt. Answers are filtered to the client and grouped by
+name before the 20-name limit, and each client's scan reads at most 10,000
+answers; `complete` is false when either limit left names out. Unrelated
+clients, failed answers, and later lookups do not supply suggestions.
+Suggestions match the client address that made each lookup, so a host that
+resolves over one IP family and connects over the other gets none. An optional
+`client` IP restricts suggestions to that client; one no longer listed in the
+Request returns 409 `request_changed`. An unavailable suggestions read fails
+visibly rather than opening an IP-based draft. Every dashboard `status` includes
+`needsReview`, the number of requests waiting for review, and `gateway`: the
+gateway's own `addresses` and the parameters of its fixed accepts (DNS gate
+`dnsPort`, machine link `machinePort`, `controllerPort`, and
+`controllerAddresses`, and `upstreamDns`) as it last reported them, or null
+before its first report. A name lookup requires `instanceId` and one of its
+registered addresses. A disabled resolver returns 409. Lookup results
+distinguish resolved, not-found, ambiguous, and unavailable states; retained
+lookup status also reports expiry.
 
 Monitor filters accept instance, peer IP, domain, hostname, direction, protocol,
 service port, and a retained period within 180 days. Totals cover the full
@@ -193,9 +211,10 @@ serialized. Lost acknowledgements can replay the latest batch; a changed latest
 identity or older sequence returns 409.
 
 Observation detail strings are limited to 4,096 characters, except
-`details.addresses` on `dns` events from `resolver-gate`. That field preserves
-all accepted answer values and allows up to 65,278 characters, derived from 256
-answers of at most 253 characters separated by a comma and a space.
+`details.addresses` on `dns` events from `resolver-gate`. That field lists the
+addresses at the end of the answer's CNAME chain, none for an invalid chain, and
+allows up to 65,278 characters, derived from 256 answers of at most 253
+characters separated by a comma and a space.
 
 Observation source, original timestamp, tuple scope, and source record identity
 remain explicit. Suricata and PTR observations never authorize traffic. Requests

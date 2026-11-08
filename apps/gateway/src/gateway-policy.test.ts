@@ -77,6 +77,7 @@ function policy(): Policy {
       },
     ],
     settings: {
+      dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,
       permissionLimit: 4096,
       trafficHistoryBytes: "268435456",
@@ -264,6 +265,18 @@ it("admits DNS lookups against the last confirmed policy", async () => {
     revision: "2",
     policyHash: hashDocument(allowed),
   });
+
+  await f.owner.apply({
+    ...blocked,
+    revision: "3",
+    settings: { ...blocked.settings, dnsReleaseMode: "before-approval" },
+  });
+  expect(f.owner.admitDns("10.22.241.10", "unapproved.example")).toMatchObject({
+    allowed: true,
+    ruleId: null,
+    revision: "3",
+  });
+  expect(f.owner.admitDns("10.22.241.11", "unapproved.example")).toBeNull();
 });
 
 it("does not start native work or change policy/quota after failed preparation", async () => {

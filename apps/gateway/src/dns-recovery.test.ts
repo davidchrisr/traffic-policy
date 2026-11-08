@@ -155,6 +155,7 @@ function policy(): Policy {
       block,
     ],
     settings: {
+      dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,
       permissionLimit: 4096,
       trafficHistoryBytes: "268435456",
@@ -192,6 +193,37 @@ it("returns the denying decision for an answer after its Allow is revoked", asyn
     policyHash: hashDocument(revoked),
   });
   expect(f.counts()).toEqual(before);
+});
+
+it("learns released answers without opening connections and binds them after approval", async () => {
+  const value = policy();
+
+  const f = await fixture(atomicJson, {
+    ...value,
+    settings: { ...value.settings, dnsReleaseMode: "before-approval" },
+    rules: value.rules.filter((rule) => rule.action === "block"),
+  });
+
+  await expect(f.resolve()).resolves.toMatchObject({
+    revision: "1",
+    permissions: 0,
+  });
+  await expect(
+    f.enforcer.apply({ ...f.value, revision: "2", rules: value.rules }),
+  ).resolves.toMatchObject({ permissions: 1 });
+
+  const strict = {
+    ...f.value,
+    revision: "3",
+    settings: { ...f.value.settings, dnsReleaseMode: "require-allow" as const },
+  };
+
+  await f.enforcer.apply(strict);
+  await expect(f.resolve()).resolves.toMatchObject({
+    allowed: false,
+    catchAll: true,
+    revision: "3",
+  });
 });
 
 it("preserves FIFO policy changes and prepare boundaries between DNS batches", async () => {

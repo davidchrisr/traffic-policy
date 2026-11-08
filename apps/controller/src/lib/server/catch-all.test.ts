@@ -40,6 +40,7 @@ const policy = (rules: Rule[]): Policy =>
     instances: [],
     rules,
     settings: {
+      dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 300,
       permissionLimit: 1000,
       trafficHistoryBytes: "536870912",

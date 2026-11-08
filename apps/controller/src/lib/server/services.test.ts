@@ -9,6 +9,7 @@ import { saveInstance, store } from "./services.ts";
 const admin = { actor: "Admin", client: null };
 
 const settings: Settings = {
+  dnsReleaseMode: "require-allow",
   dnsGraceSeconds: 7200,
   permissionLimit: 4096,
   trafficHistoryBytes: "268435456",

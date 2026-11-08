@@ -12,14 +12,11 @@ import type {
 import { DnsRuleIndex } from "./dns-rules.ts";
 import { scopeTree } from "./index.ts";
 
-export function addressLeases(
-  policy: Policy,
-  resolution: Resolution,
-  index = new DnsRuleIndex(policy),
-): AddressLease[] {
-  const context = index.context(resolution.clientIp);
-
-  if (!context) throw new Error("DNS client is not enrolled");
+// The address answers for the question's name at the end of its CNAME chain, each with the TTL
+// the chain allows. An invalid chain throws.
+export function terminalAnswers(
+  resolution: Pick<Resolution, "question" | "answers">,
+): { value: string; ttl: number }[] {
   let owner = resolution.question;
   let chainTtl = 4294967295;
   const visited = new Set<string>();
@@ -49,13 +46,26 @@ export function addressLeases(
     owner = canonicalName(aliases[0]!.value);
   }
 
+  return resolution.answers
+    .filter((answer) => answer.owner === owner && answer.type !== "CNAME")
+    .map((answer) => ({
+      value: answer.value,
+      ttl: Math.min(answer.ttl, chainTtl),
+    }));
+}
+
+export function addressLeases(
+  policy: Policy,
+  resolution: Resolution,
+  index = new DnsRuleIndex(policy),
+): AddressLease[] {
+  const context = index.context(resolution.clientIp);
+
+  if (!context) throw new Error("DNS client is not enrolled");
   const leases = new Map<string, AddressLease>();
 
-  for (const answer of resolution.answers.filter(
-    (value) => value.owner === owner && value.type !== "CNAME",
-  )) {
-    const ttlSeconds = Math.min(answer.ttl, chainTtl);
-    const address = canonicalIp(answer.value);
+  for (const { value, ttl: ttlSeconds } of terminalAnswers(resolution)) {
+    const address = canonicalIp(value);
 
     const expiresAt = new Date(
       Date.parse(resolution.responseAt) +

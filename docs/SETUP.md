@@ -238,6 +238,10 @@ When the controller's stored format changes, recreate the test state or repair
 it manually before starting the new build. Gateway recovery does not convert the
 controller database.
 
+`dnsReleaseMode` is required in settings and saved policies; a missing mode is
+rejected. The example uses `before-approval`; `require-allow` retains DNS
+approval before answer release.
+
 Upgrade the gateway while the controller is running and can reach it. Install
 the new outputs the same way as above, then restart `tp-enforcement` followed by
 `tp-gateway`, or both `tp-controller` and `tp-controller-machine` on the

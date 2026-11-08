@@ -5,6 +5,7 @@
   import type { PageProps } from "./$types";
   import {
     requestNamesSchema,
+    requestSuggestionsSchema,
     requestsSnapshotSchema,
     type RequestNames,
     type RequestsView,
@@ -14,6 +15,7 @@
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Badge } from "#lib/components/ui/badge/index.ts";
   import RuleEditor from "#lib/components/RuleEditor.svelte";
+  import { requestPeer, type RequestPeer } from "#lib/request-peer.ts";
   import InspectorPanel from "#lib/components/InspectorPanel.svelte";
   import type { RuleDraft } from "@traffic-policy/contracts/dashboard";
   import StatusLine from "#lib/components/StatusLine.svelte";
@@ -23,6 +25,7 @@
   import { policyTree, ruleName, type DecisionState } from "#lib/rule-state.ts";
   import {
     decideTraffic,
+    dnsAddressRefusal,
     serviceLabel,
     subjectContext,
   } from "@traffic-policy/core";
@@ -45,6 +48,9 @@
 
   // Kept in a mustache so formatting cannot move or drop the spaces around it.
   const separator = " · ";
+
+  // A stalled suggestions read would otherwise hold every decision on the page.
+  const SUGGESTIONS_TIMEOUT_MS = 10_000;
 
   let model = $state.raw(untrack(() => data)),
     // The last main-list snapshot, whose Applying and Failed counts stay shown while Dismissed is.
@@ -70,6 +76,12 @@
   const pendingShown = $derived(
     model.requests.filter((request) => request.state !== "dismissed").length,
   );
+
+  // The draft's peer choices and the address it is for, while deciding a connection Request.
+  let peerChoices = $state.raw<RequestPeer[]>([]),
+    suggestionsComplete = $state(true),
+    peerAddress = $state<string | null>(null),
+    deciding = $state<string | null>(null);
 
   const shown = $derived(
     ready ? model.requests.filter((request) => request.state === filter) : [],
@@ -331,39 +343,89 @@
   });
 
   // Decides a Request for its instance, or for one of its clients' addresses.
-  function decide(
+  async function decide(
     request: RuleRequest,
     action: "allow" | "block",
     address: string | null = null,
   ) {
-    editing = null;
-    amend = null;
-    scope = {
-      action,
-      subject: address
-        ? { kind: "address", value: address }
-        : { kind: "instance", instanceId: request.instanceId },
-      ...(request.kind === "dns"
-        ? {
-            direction: "outgoing",
-            peer:
-              request.question === "."
-                ? { kind: "any" }
-                : { kind: "hostname", value: request.question },
-            protocol: null,
-            ports: null,
-          }
-        : {
-            direction: request.direction,
-            peer: { kind: "ip", value: request.peerIp },
-            protocol: request.protocol,
-            ports:
-              request.port === null
-                ? null
-                : [{ start: request.port, end: request.port }],
-          }),
-    };
-    open = true;
+    if (deciding) return;
+    deciding = request.id;
+    error = "";
+
+    try {
+      let peer: RuleDraft["peer"];
+      peerChoices = [];
+      suggestionsComplete = true;
+      peerAddress = request.kind === "connection" ? request.peerIp : null;
+
+      // Hostname rules apply to outgoing traffic only, so other connections keep the IP address.
+      if (request.kind === "connection" && request.direction === "outgoing") {
+        const query =
+          address === null ? "" : `?client=${encodeURIComponent(address)}`;
+
+        const observed = requestSuggestionsSchema.parse(
+          await api(
+            `requests/${encodeURIComponent(request.id)}/suggestions${query}`,
+            "GET",
+            undefined,
+            AbortSignal.timeout(SUGGESTIONS_TIMEOUT_MS),
+          ),
+        );
+
+        const suggestion = requestPeer(
+          request.peerIp,
+          observed,
+          dnsAddressRefusal(
+            { dnsDestinations: null },
+            request.peerIp,
+            model.localNetworks,
+          ) === null,
+        );
+
+        peer = suggestion.peer;
+        peerChoices = suggestion.choices;
+        suggestionsComplete = observed.complete;
+      } else if (request.kind === "connection")
+        peer = { kind: "ip", value: request.peerIp };
+      else
+        peer =
+          request.question === "."
+            ? { kind: "any" }
+            : { kind: "hostname", value: request.question };
+
+      editing = null;
+      amend = null;
+      scope = {
+        action,
+        subject: address
+          ? { kind: "address", value: address }
+          : { kind: "instance", instanceId: request.instanceId },
+        ...(request.kind === "dns"
+          ? {
+              direction: "outgoing",
+              peer,
+              protocol: null,
+              ports: null,
+            }
+          : {
+              direction: request.direction,
+              peer,
+              protocol: request.protocol,
+              ports:
+                request.port === null
+                  ? null
+                  : [{ start: request.port, end: request.port }],
+            }),
+      };
+      open = true;
+    } catch (failure) {
+      error =
+        failure instanceof Error && failure.name !== "TimeoutError"
+          ? failure.message
+          : "DNS names could not be loaded";
+    } finally {
+      deciding = null;
+    }
   }
 
   function refusalText(
@@ -489,6 +551,10 @@
 
   // Opens the rule with the request's exact address added to its permitted destination networks.
   function allowThrough(rule: Rule, address: string) {
+    // A pending decision would replace this edit when its names arrive.
+    if (deciding) return;
+    peerChoices = [];
+    peerAddress = null;
     editing = rule;
     amend = {
       dnsDestinations: [
@@ -533,6 +599,9 @@
         >{/each}
     </div>
     {#if error}<p class="field-error" role="alert">{error}</p>{/if}
+    {#if deciding}<p class="muted text-sm" role="status">
+        Loading DNS names…
+      </p>{/if}
     {#if missingHost}<p class="field-help mb-4" role="status">
         {missingHost} has no host Request. Registering the host or reaching the queue
         limit removes it.
@@ -881,6 +950,10 @@
   rule={editing}
   {amend}
   {scope}
+  {peerChoices}
+  {suggestionsComplete}
+  {peerAddress}
+  localNetworks={model.localNetworks}
   instances={model.instances}
   rules={model.rules}
   revision={model.status.desiredRevision}

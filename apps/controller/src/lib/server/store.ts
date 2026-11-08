@@ -162,8 +162,9 @@ const REQUEST_ROW_BYTES = 512n;
 
 const BLOCKED_COUNT_ROW_BYTES = 256;
 
-// One indexed address of a DNS answer, charged to DNS history.
-const DNS_ANSWER_ROW_BYTES = 256;
+// One indexed address of a DNS answer, charged to DNS history. A row with its suggestion index
+// entry measured about 400 bytes.
+const DNS_ANSWER_ROW_BYTES = 512;
 
 // Retention trims at most this long in one write transaction, and deletes this many rows per
 // statement.
@@ -316,8 +317,9 @@ export class ControllerStore {
         PRIMARY KEY(instance_id,rule_id,direction,resolution,bucket));
       CREATE INDEX IF NOT EXISTS blocked_count_time ON blocked_counts(resolution,bucket);
       CREATE INDEX IF NOT EXISTS blocked_count_age ON blocked_counts(bucket,resolution);
-      CREATE TABLE IF NOT EXISTS dns_answers (event_id TEXT NOT NULL, instance_id TEXT NOT NULL, address TEXT NOT NULL, at TEXT NOT NULL, UNIQUE(event_id,address));
+      CREATE TABLE IF NOT EXISTS dns_answers (event_id TEXT NOT NULL, instance_id TEXT NOT NULL, address TEXT NOT NULL, at TEXT NOT NULL, suggestion_client_ip TEXT, UNIQUE(event_id,address));
       CREATE INDEX IF NOT EXISTS dns_answer_lookup ON dns_answers(instance_id,address,at);
+      CREATE INDEX IF NOT EXISTS dns_answer_suggestion ON dns_answers(instance_id,address,suggestion_client_ip,at) WHERE suggestion_client_ip IS NOT NULL;
       CREATE INDEX IF NOT EXISTS event_metadata_peer_time ON events(instance_id,peer_ip,at) WHERE type='metadata';
       CREATE INDEX IF NOT EXISTS event_host_lookup_time ON events(json_extract(details,'$.details.clientIp'),at) WHERE type='dns' AND source='suricata' AND instance_id IS NULL;
       CREATE TABLE IF NOT EXISTS gateway_resources (id INTEGER PRIMARY KEY CHECK(id=1),at TEXT NOT NULL,details TEXT NOT NULL);
@@ -987,7 +989,7 @@ export class ControllerStore {
       );
 
       const addAnswer = this.database.prepare(
-        "INSERT OR IGNORE INTO dns_answers VALUES(?,?,?,?)",
+        "INSERT OR IGNORE INTO dns_answers VALUES(?,?,?,?,?)",
       );
 
       const addCount = this.database.prepare(
@@ -1160,8 +1162,16 @@ export class ControllerStore {
         }
 
         // Answer addresses are indexed in canonical form, matching request addresses, so the names
-        // seen for an address are found without a scan.
-        if (event.type === "dns" && event.instanceId)
+        // seen for an address are found without a scan. Confirmed resolver-gate answers also index
+        // their client, so a client's suggestions read only its own answers.
+        if (event.type === "dns" && event.instanceId) {
+          const suggestionClient =
+            event.source === "resolver-gate" &&
+            event.details.outcome === "confirmed" &&
+            client.success
+              ? client.data
+              : null;
+
           for (const address of String(event.details.addresses ?? "").split(
             ", ",
           ))
@@ -1171,7 +1181,9 @@ export class ControllerStore {
                 event.instanceId,
                 canonicalIp(address),
                 new Date(event.observedAt).toISOString(),
+                suggestionClient,
               );
+        }
 
         if (
           event.type === "traffic" &&
@@ -1258,12 +1270,11 @@ export class ControllerStore {
             };
 
             const peerIp = event.peerIp;
+            const clients = recentValues(old?.clients, context.address, at);
 
             const state = deniedState(
               this.trafficTargeted(policyNow().policy, context, traffic, () =>
-                this.reads
-                  .requestNames(context.instanceId, peerIp)
-                  .names.map(({ hostname }) => hostname),
+                this.requestHostnames(context.instanceId, peerIp, clients),
               ),
               old?.state,
             );
@@ -1285,7 +1296,7 @@ export class ControllerStore {
                   at,
                   event.ruleId,
                   state,
-                  recentValues(old?.clients, context.address, at),
+                  clients,
                 );
           }
         }
@@ -1457,6 +1468,8 @@ export class ControllerStore {
     context: SubjectContext,
     question: string,
   ) {
+    if (policy.settings.dnsReleaseMode === "before-approval") return true;
+
     const decision = decideDns(policy.rules, context, question);
 
     return decision.allowed || !decision.catchAll;
@@ -1464,6 +1477,33 @@ export class ControllerStore {
   // A connection request is decided once a rule other than the catch-all decides it. A hostname or
   // domain rule that may admit the address decides it when one of the names seen for the address
   // matches; `seen` reads them only then.
+  // Names that can decide a Request: those seen for its address, and those its clients' lookups
+  // resolved to it, which the Requests page suggests even once newer answers displace them. Each
+  // client is read alone, as a draft for its address is, so another client's names cannot crowd
+  // out its own.
+  private requestHostnames(
+    instanceId: string,
+    peerIp: string,
+    clients: SQLOutputValue | undefined,
+  ) {
+    const recent = readRecent(clients).map(({ value, at }) => ({
+      address: value,
+      at,
+    }));
+
+    return [
+      ...new Set([
+        ...this.reads
+          .requestNames(instanceId, peerIp)
+          .names.map(({ hostname }) => hostname),
+        ...recent.flatMap(
+          (client) =>
+            this.reads.requestSuggestions(instanceId, peerIp, [client])
+              .hostnames,
+        ),
+      ]),
+    ];
+  }
   private trafficTargeted(
     policy: Policy,
     context: SubjectContext,
@@ -1520,7 +1560,7 @@ export class ControllerStore {
           .run(targeted ? "applying" : "needs-review", row.id!);
     }
 
-    // Requests for other services of the same address share its names.
+    // Requests for other services of the same address and clients share their names.
     const names = new Map<string, string[]>();
 
     for (const row of this.database
@@ -1541,14 +1581,16 @@ export class ControllerStore {
       };
 
       const seen = () => {
-        const key = `${String(row.instance_id)} ${traffic.peerIp}`;
+        const key = `${String(row.instance_id)} ${traffic.peerIp} ${String(row.clients)}`;
 
         if (!names.has(key))
           names.set(
             key,
-            this.reads
-              .requestNames(String(row.instance_id), traffic.peerIp)
-              .names.map(({ hostname }) => hostname),
+            this.requestHostnames(
+              String(row.instance_id),
+              traffic.peerIp,
+              row.clients,
+            ),
           );
 
         return names.get(key)!;
@@ -2021,6 +2063,42 @@ export class ControllerStore {
     return this.reads.requestNames(
       String(request.instance_id),
       String(request.peer_ip),
+    );
+  }
+  // Suggestions for the Request's clients, or for one of them, each up to its own latest attempt.
+  requestSuggestions(id: string, client: string | null = null) {
+    const request = this.database
+      .prepare("SELECT instance_id,peer_ip,clients FROM requests WHERE id=?")
+      .get(id);
+
+    if (!request)
+      throw new ServiceError(
+        404,
+        "request_not_found",
+        "Request no longer exists",
+      );
+
+    const clients = readRecent(request.clients).map((value) => ({
+      address: value.value,
+      at: value.at,
+    }));
+
+    const selected =
+      client === null
+        ? clients
+        : clients.filter((value) => value.address === client);
+
+    if (client !== null && !selected.length)
+      throw new ServiceError(
+        409,
+        "request_changed",
+        "This client no longer appears in the Request",
+      );
+
+    return this.reads.requestSuggestions(
+      String(request.instance_id),
+      String(request.peer_ip),
+      selected,
     );
   }
   requests(host: string | null = null, view: RequestsView = "main") {

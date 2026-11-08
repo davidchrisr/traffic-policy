@@ -1,4 +1,5 @@
 {
+  "dnsReleaseMode": "before-approval",
   "dnsGraceSeconds": 300,
   "permissionLimit": 4096,
   "trafficHistoryBytes": "1073741824",

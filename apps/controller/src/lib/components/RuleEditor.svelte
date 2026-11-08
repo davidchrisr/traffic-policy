@@ -9,6 +9,7 @@
   } from "@lucide/svelte";
   import type { Instance, Rule } from "@traffic-policy/contracts";
   import type { RuleDraft } from "@traffic-policy/contracts/dashboard";
+  import type { RequestPeer } from "#lib/request-peer.ts";
   import {
     formatPorts,
     parsePorts,
@@ -21,9 +22,10 @@
   import { Label } from "#lib/components/ui/label/index.ts";
   import { Textarea } from "#lib/components/ui/textarea/index.ts";
   import { Checkbox } from "#lib/components/ui/checkbox/index.ts";
-  import { overriddenBy } from "@traffic-policy/core";
+  import { dnsAddressRefusal, overriddenBy } from "@traffic-policy/core";
   import { currentTime } from "#lib/clock.ts";
   import { formatInstantInSentence } from "#lib/format-time.ts";
+  import { policyTree } from "#lib/rule-state.ts";
   import Choice from "./Choice.svelte";
   import RuleLabel from "./RuleLabel.svelte";
 
@@ -32,6 +34,10 @@
     rule = null,
     scope = null,
     amend = null,
+    peerChoices = [],
+    suggestionsComplete = true,
+    peerAddress = null,
+    localNetworks = [],
     instances,
     rules = [],
     revision,
@@ -42,6 +48,12 @@
     scope?: Partial<RuleDraft> | null;
     // Changes proposed on top of `rule`, shown as unsaved for review.
     amend?: { dnsDestinations: string[] } | null;
+    peerChoices?: RequestPeer[];
+    // False when more DNS names may share the address than `peerChoices` lists.
+    suggestionsComplete?: boolean;
+    // The address the rule is for, checked against a hostname or domain rule's DNS destinations.
+    peerAddress?: string | null;
+    localNetworks?: string[];
     instances: Instance[];
     // The current rules, used to warn when another rule overrides this one.
     rules?: Rule[];
@@ -93,6 +105,15 @@
       return failure instanceof Error ? failure.message : "Enter valid ports";
     }
   });
+
+  function choosePeer(value: string) {
+    const peer = peerChoices.find((choice) => JSON.stringify(choice) === value);
+
+    if (peer) {
+      fields.peerKind = peer.kind;
+      fields.peerValue = peer.value;
+    }
+  }
 
   function localTime(raw: string | null | undefined): string {
     if (!raw) return "";
@@ -242,6 +263,51 @@
     }
   }
 
+  // Why a hostname or domain draft would not admit the address it is for, or null.
+  const unadmitted = $derived.by(() => {
+    if (
+      !open ||
+      !peerAddress ||
+      !["hostname", "domain"].includes(fields.peerKind)
+    )
+      return null;
+    const candidate = draft();
+
+    return candidate.ok
+      ? dnsAddressRefusal(candidate.value, peerAddress, localNetworks)
+      : null;
+  });
+
+  // An address subject with no scope of its own gets one when saved. Answers its clients already
+  // hold stay with their previous scope, so a hostname or domain rule waits for a new lookup.
+  const newScope = $derived.by(() => {
+    if (
+      !open ||
+      fields.subject !== "address" ||
+      !["hostname", "domain"].includes(fields.peerKind)
+    )
+      return null;
+    const candidate = draft();
+
+    if (!candidate.ok || candidate.value.subject.kind !== "address")
+      return null;
+    const { value } = candidate.value.subject;
+
+    return policyTree(instances, rules).entries.some(
+      (entry) => entry.network === value,
+    )
+      ? null
+      : value;
+  });
+
+  function addDestination(address: string) {
+    const network = `${address}/${address.includes(":") ? 128 : 32}`;
+
+    fields.dnsDestinations = fields.dnsDestinations.trim()
+      ? `${fields.dnsDestinations.trim()}, ${network}`
+      : network;
+  }
+
   const override = $derived.by(() => {
     const candidate = open ? draft() : null;
 
@@ -317,8 +383,6 @@
   >
     <Dialog.Header
       ><Dialog.Title>{rule ? "Edit rule" : "Create rule"}</Dialog.Title
-      ><Dialog.Description
-        >Choose the exact scope and lifetime of this permission.</Dialog.Description
       ></Dialog.Header
     >
     <form
@@ -412,13 +476,9 @@
           <Label for="rule-subject-address">Address or network</Label><Input
             id="rule-subject-address"
             bind:value={fields.subjectAddress}
+            placeholder="IP or CIDR inside an instance"
             required
           />
-          <p class="muted text-xs">
-            An IP or CIDR inside an instance. It keeps that instance's rules and
-            adds this one. Registering the address as an instance later moves
-            this rule to it.
-          </p>
         </div>{/if}
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="field-group">
@@ -451,9 +511,33 @@
           />
         </div>
       </div>
+      {#if peerChoices.length > 1}<div class="field-group">
+          <Label for="request-peer">Observed destination</Label>
+          <Choice
+            id="request-peer"
+            label="Observed destination"
+            fullWidth
+            bind:value={
+              () =>
+                JSON.stringify({
+                  kind: fields.peerKind,
+                  value: fields.peerValue,
+                }),
+              choosePeer
+            }
+            options={peerChoices.map((peer) => ({
+              value: JSON.stringify(peer),
+              label:
+                peer.kind === "hostname"
+                  ? peer.value
+                  : `IP address · ${peer.value}`,
+            }))}
+          />{#if !suggestionsComplete}<p class="field-help muted">
+              More names share this address.
+            </p>{/if}
+        </div>{/if}
       {#if fields.peerKind === "gateway"}<p class="muted text-xs">
-          The gateway at any of its addresses: connections it receives from or
-          starts to the subject, never traffic it forwards.
+          Traffic to or from the gateway itself, not traffic it forwards.
         </p>{:else if fields.peerKind !== "any"}<div class="field-group">
           <Label for="rule-peer-value"
             >{fields.peerKind === "cidr"
@@ -463,11 +547,8 @@
             id="rule-peer-value"
             bind:value={fields.peerValue}
             required
-          />{#if fields.peerKind === "hostname" || fields.peerKind === "domain"}<p
-              class="muted text-xs"
-            >
-              DNS selectors require outgoing direction. Shared IP addresses
-              cannot isolate hostnames.
+          />{#if newScope}<p class="muted text-xs">
+              Takes effect on the next lookup from {newScope}.
             </p>{/if}
         </div>{/if}
       <div class="grid gap-3 sm:grid-cols-3">
@@ -493,17 +574,12 @@
             <Label for="rule-ports">Ports</Label><Input
               id="rule-ports"
               bind:value={fields.ports}
-              placeholder="Any"
+              placeholder="Any, or e.g. 443, 8000-8080"
               aria-invalid={portsError ? "true" : undefined}
-              aria-describedby="rule-ports-help"
-            />
-            <p
-              id="rule-ports-help"
-              class={portsError ? "field-error" : "muted text-xs"}
-            >
-              {portsError ||
-                "Ports and ranges, separated by commas, such as 443 or 443-1000, 8080."}
-            </p>
+              aria-describedby={portsError ? "rule-ports-error" : undefined}
+            />{#if portsError}<p id="rule-ports-error" class="field-error">
+                {portsError}
+              </p>{/if}
           </div>{/if}
       </div>
       {#if fields.protocol === "1" || fields.protocol === "58"}<div
@@ -530,13 +606,12 @@
         </div>{/if}
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="field-group">
-          <Label for="rule-start">Activation</Label><Input
+          <Label for="rule-start">Activation (optional)</Label><Input
             id="rule-start"
             type="datetime-local"
             step="1"
             bind:value={fields.notBefore}
           />
-          <p class="muted text-xs">Leave empty to activate immediately.</p>
         </div>
         <div class="field-group">
           <Label for="rule-lifetime">Lifetime</Label><Choice
@@ -570,9 +645,28 @@
           <Label for="dns-networks">Permitted destination networks</Label><Input
             id="dns-networks"
             bind:value={fields.dnsDestinations}
-            placeholder="Public addresses only"
+            placeholder="Public addresses outside your local networks"
           />
-          <p class="muted text-xs">Empty means public addresses only.</p>
+        </div>{/if}
+      {#if unadmitted && peerAddress}<div role="status" class="rule-override">
+          <TriangleAlert
+            size={16}
+            class="text-pending mt-0.5 shrink-0"
+            aria-hidden="true"
+          />
+          <div class="min-w-0 space-y-2">
+            <p>
+              This request went to {peerAddress}, which isn't in Permitted
+              destination networks, so this rule won't match it.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              type="button"
+              onclick={() => addDestination(peerAddress)}
+              >Add to destinations</Button
+            >
+          </div>
         </div>{/if}
       <div class="flex items-center gap-2">
         <Checkbox id="rule-enabled" bind:checked={fields.enabled} /><Label

@@ -252,6 +252,41 @@ describe("native observation normalization", () => {
     expect(failed.instanceId).toBeNull();
     expect(failed.details).not.toHaveProperty("appliedRevision");
   });
+  it("reports only the addresses of the name a DNS answer's CNAME chain ends at", () => {
+    const answer = (owner: string, type: "A" | "CNAME", value: string) => ({
+      owner,
+      type,
+      value,
+      ttl: 60,
+    });
+
+    const resolution = {
+      clientIp: "10.22.241.10",
+      question: "www.example",
+      responseAt: new Date().toISOString(),
+      answers: [
+        answer("www.example", "CNAME", "edge.example"),
+        answer("edge.example", "A", "192.0.2.10"),
+        answer("unrelated.example", "A", "192.0.2.20"),
+      ],
+    };
+
+    expect(dnsObservation(resolution, null).details.addresses).toBe(
+      "192.0.2.10",
+    );
+    expect(
+      dnsObservation(
+        {
+          ...resolution,
+          answers: [
+            answer("www.example", "CNAME", "edge.example"),
+            answer("www.example", "A", "192.0.2.30"),
+          ],
+        },
+        null,
+      ).details.addresses,
+    ).toBe("");
+  });
   it("leaves the committed baseline unchanged when a prepared sample cannot be persisted", () => {
     const accounting = new TrafficAccounting();
     accounting.newConnection(connection, policy, "2026-10-09T20:00:00.000Z");

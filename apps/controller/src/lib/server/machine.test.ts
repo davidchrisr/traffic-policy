@@ -18,6 +18,7 @@ import { deliverPolicy, exclusive } from "./machine.ts";
 const directories: string[] = [];
 
 const settings: Settings = {
+  dnsReleaseMode: "require-allow",
   dnsGraceSeconds: 0,
   permissionLimit: 4096,
   trafficHistoryBytes: "268435456",

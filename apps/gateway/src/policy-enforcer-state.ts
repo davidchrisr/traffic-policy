@@ -21,6 +21,9 @@ export interface Snapshot {
 
 export const DNS_STATE_LIMIT = 100000;
 
+// Leases one instance may hold, so one client's lookups cannot fill the shared DNS_STATE_LIMIT.
+export const DNS_INSTANCE_LEASE_LIMIT = 10000;
+
 export function permissionsForLeases(
   policy: Policy,
   leases: AddressLease[],

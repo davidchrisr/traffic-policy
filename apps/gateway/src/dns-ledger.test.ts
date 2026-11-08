@@ -12,6 +12,7 @@ import { hashDocument } from "@traffic-policy/core/io";
 import { DnsLedger } from "./dns-ledger.ts";
 import { sequentialMarks } from "./test-native.ts";
 import {
+  DNS_INSTANCE_LEASE_LIMIT,
   permissionsForLeases,
   permissionCount,
   stateBytes,
@@ -65,6 +66,7 @@ function policy(limit = 4096): Policy {
       { ...common, id: "00000000-0000-4000-8000-000000000002" },
     ],
     settings: {
+      dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,
       permissionLimit: limit,
       trafficHistoryBytes: "268435456",
@@ -454,6 +456,34 @@ it("agrees with the former full-state path across refreshes, expiry and rejected
     expect(ledger.serializedBytes).toBe(Number(stateBytes(expected)));
   }
 });
+
+it("limits each instance's leases, granted or not, without blocking other instances or refreshes", () => {
+  const held = Array.from({ length: DNS_INSTANCE_LEASE_LIMIT }, (_, n) =>
+    lease(`q${n}.unruled.test`),
+  );
+
+  const ledger = open(policy(), held),
+    batch = ledger.begin(now);
+
+  expect(ledger.associations).toBe(0);
+  expect(() => batch.stage([lease("new.unruled.test")], now)).toThrow(
+    expect.objectContaining({ code: "dns_instance_capacity" }),
+  );
+  batch.stage([lease("new.unruled.test", "192.0.2.10", now, 60, other)], now);
+  batch.stage([lease("q0.unruled.test", "192.0.2.10", now + 1000)], now);
+  batch.commit();
+  expect(ledger.instanceLeases.get(client)).toBe(DNS_INSTANCE_LEASE_LIMIT);
+  expect(ledger.instanceLeases.get(other)).toBe(1);
+
+  // Expired leases free the instance's allocation.
+  const later = now + 120000,
+    next = ledger.begin(later);
+
+  next.stage([lease("new.unruled.test", "192.0.2.10", later)], later);
+  next.commit();
+  expect(ledger.instanceLeases.get(client)).toBe(1);
+  expect(ledger.instanceLeases.has(other)).toBe(false);
+}, 15000);
 
 it("bounds multiplied contributions without changing confirmed state", () => {
   const value = policy();

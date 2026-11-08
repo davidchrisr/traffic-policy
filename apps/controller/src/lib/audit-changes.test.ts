@@ -55,6 +55,7 @@ const policy = (rules: Rule[], dnsGraceSeconds = 7200): Policy =>
     ],
     rules: [...rules, catchAll],
     settings: {
+      dnsReleaseMode: "require-allow",
       dnsGraceSeconds,
       permissionLimit: 4096,
       trafficHistoryBytes: "268435456",

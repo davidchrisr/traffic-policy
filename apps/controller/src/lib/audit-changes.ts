@@ -3,6 +3,7 @@ import {
   peerSchema,
   portsSchema,
   ruleSchema,
+  settingsSchema,
   subjectSchema,
   type Instance,
   type Rule,
@@ -130,6 +131,13 @@ const days: Field["format"] = (value) => {
 };
 
 const settingsFields = {
+  dnsReleaseMode: {
+    label: "DNS release mode",
+    format: (value) =>
+      settingsSchema.shape.dnsReleaseMode.parse(value) === "before-approval"
+        ? "Before approval"
+        : "After an Allow rule",
+  },
   dnsGraceSeconds: {
     label: "DNS grace period",
     format: (value) => `${z.number().parse(value)} seconds`,

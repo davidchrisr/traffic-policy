@@ -811,4 +811,5 @@ export {
   permissionLeaseKey,
   iteratePermissionsForLeases,
   reconcileLeases,
+  terminalAnswers,
 } from "./leases.ts";

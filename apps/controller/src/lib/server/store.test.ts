@@ -29,6 +29,7 @@ import {
 const directories: string[] = [];
 
 const settings: Settings = {
+  dnsReleaseMode: "require-allow",
   dnsGraceSeconds: 7200,
   permissionLimit: 4096,
   trafficHistoryBytes: "268435456",
@@ -2291,7 +2292,7 @@ describe("history limits per kind", () => {
 
       expect(addresses()).toEqual(["192.0.2.10", "2001:db8::1"]);
       expect(store.resources().historyUsedBytes.dns).toBe(
-        String(Buffer.byteLength(JSON.stringify(answer)) + 256 + 2 * 256),
+        String(Buffer.byteLength(JSON.stringify(answer)) + 256 + 2 * 512),
       );
 
       store.mutation(
@@ -2467,6 +2468,215 @@ describe("subnet instances and unregistered hosts", () => {
       }));
       expect(store.requests().requests[0]?.state).toBe("applying");
     } finally {
+      store.close();
+    }
+  });
+
+  it("settles DNS requests when release-first is confirmed and ignores late denials", async () => {
+    const store = await subnetStore();
+
+    try {
+      store.ingest(batch([denied("10.10.0.37")]));
+      expect(store.requests().requests[0]?.state).toBe("needs-review");
+
+      const policy = store.mutation(
+        "2",
+        "settings-updated",
+        "Settings",
+        (value) => ({
+          ...value,
+          settings: { ...value.settings, dnsReleaseMode: "before-approval" },
+        }),
+      );
+
+      expect(store.requests().requests[0]?.state).toBe("applying");
+      store.confirm(policy, {
+        protocolVersion: 1,
+        revision: policy.revision,
+        policyHash: hashDocument(policy),
+        bootId: randomUUID(),
+        appliedAt: new Date().toISOString(),
+        permissions: 0,
+      });
+      expect(store.requests().requests).toEqual([]);
+      store.ingest(batch([denied("10.10.0.37", "late.example")]));
+      expect(store.requests().requests).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("keeps hostname suggestions scoped to the requested client", async () => {
+    const store = await subnetStore();
+    const sql = new DatabaseSync(store.path);
+
+    try {
+      const clients = ["10.10.0.37", "10.10.0.41"];
+
+      const answer = (clientIp: string, question: string, outcome: string) => ({
+        ...retentionEvent(),
+        instanceId: subnet,
+        question,
+        details: {
+          outcome,
+          clientIp,
+          addresses: "93.184.216.34",
+          appliedRevision: "2",
+          policyHash: hashDocument(store.desired()),
+        },
+      });
+
+      store.ingest(
+        batch([
+          ...clients.map((clientIp, index) =>
+            answer(clientIp, `client${index}.example`, "confirmed"),
+          ),
+          answer(clients[0]!, "failed.example", "failed"),
+        ]),
+      );
+
+      // Only confirmed answers index their client for suggestions.
+      expect(
+        sql
+          .prepare(
+            "SELECT suggestion_client_ip AS client FROM dns_answers ORDER BY client",
+          )
+          .all()
+          .map((row) => row.client),
+      ).toEqual([null, ...clients]);
+      const at = new Date(Date.now() + 10).toISOString();
+      const id = randomUUID();
+
+      sql
+        .prepare(
+          "INSERT INTO requests(id,instance_id,direction,peer_ip,protocol,port,attempts,first_at,last_at,rule_id,state,clients) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          id,
+          subnet,
+          "outgoing",
+          "93.184.216.34",
+          6,
+          443,
+          "1",
+          at,
+          at,
+          store.desired().rules[0]!.id,
+          "needs-review",
+          JSON.stringify(clients.map((value) => ({ value, at }))),
+        );
+      expect(store.requestSuggestions(id).hostnames.sort()).toEqual([
+        "client0.example",
+        "client1.example",
+      ]);
+      expect(store.requestSuggestions(id, clients[0]!).hostnames).toEqual([
+        "client0.example",
+      ]);
+      expect(() => store.requestSuggestions(id, "10.10.0.99")).toThrow(
+        expect.objectContaining({ code: "request_changed" }),
+      );
+
+      // A client's suggestions end at its own latest attempt, not the Request's.
+      const earlier = new Date(Date.now() - 600_000).toISOString();
+
+      sql.prepare("UPDATE requests SET clients=? WHERE id=?").run(
+        JSON.stringify([
+          { value: clients[0], at },
+          { value: clients[1], at: earlier },
+        ]),
+        id,
+      );
+      expect(store.requestSuggestions(id).hostnames).toEqual([
+        "client0.example",
+      ]);
+      expect(store.requestSuggestions(id, clients[1]!).hostnames).toEqual([]);
+    } finally {
+      sql.close();
+      store.close();
+    }
+  });
+
+  it("resolves a Request through its client's suggested name after another of its clients displaces it from the address's names", async () => {
+    const store = await subnetStore();
+    const sql = new DatabaseSync(store.path);
+
+    try {
+      const start = Date.now() - 60_000;
+
+      const answer = (clientIp: string, question: string, offset: number) => ({
+        ...retentionEvent(),
+        observedAt: new Date(start + offset).toISOString(),
+        instanceId: subnet,
+        question,
+        details: {
+          outcome: "confirmed",
+          clientIp,
+          addresses: "93.184.216.34",
+          appliedRevision: "2",
+          policyHash: hashDocument(store.desired()),
+        },
+      });
+
+      store.ingest(
+        batch([
+          answer("10.10.0.37", "api.example", 0),
+          ...Array.from({ length: 20 }, (_, index) =>
+            answer("10.10.0.41", `other${index}.example`, 1000 + index),
+          ),
+        ]),
+      );
+
+      const at = new Date().toISOString();
+      const id = randomUUID();
+
+      sql
+        .prepare(
+          "INSERT INTO requests(id,instance_id,direction,peer_ip,protocol,port,attempts,first_at,last_at,rule_id,state,clients) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          id,
+          subnet,
+          "outgoing",
+          "93.184.216.34",
+          6,
+          443,
+          "1",
+          at,
+          at,
+          store.desired().rules[0]!.id,
+          "needs-review",
+          JSON.stringify([
+            { value: "10.10.0.37", at },
+            { value: "10.10.0.41", at },
+          ]),
+        );
+      expect(
+        store.requestNames(id).names.map(({ hostname }) => hostname),
+      ).not.toContain("api.example");
+      expect(store.requestSuggestions(id).hostnames).not.toContain(
+        "api.example",
+      );
+      expect(store.requestSuggestions(id, "10.10.0.37").hostnames).toEqual([
+        "api.example",
+      ]);
+      // The draft for the latest client's address uses its own suggestion.
+      store.mutation("2", "rule-created", "api", (policy) => ({
+        ...policy,
+        rules: [
+          ...policy.rules,
+          {
+            ...policy.rules[0]!,
+            id: randomUUID(),
+            subject: { kind: "address", value: "10.10.0.37" },
+            direction: "outgoing",
+            peer: { kind: "hostname", value: "api.example" },
+            action: "allow",
+          },
+        ],
+      }));
+      expect(store.requests().requests[0]?.state).toBe("applying");
+    } finally {
+      sql.close();
       store.close();
     }
   });

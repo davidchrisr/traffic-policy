@@ -133,6 +133,7 @@ function policy(rules: Rule[]): Policy {
     instances: structuredClone(instances),
     rules: [...rules, rule()],
     settings: {
+      dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 7200,
       permissionLimit: 4096,
       trafficHistoryBytes: "268435456",

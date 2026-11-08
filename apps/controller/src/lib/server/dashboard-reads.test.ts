@@ -2,7 +2,11 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DashboardStatus } from "@traffic-policy/contracts/dashboard";
-import { browserName, DashboardReads } from "./dashboard-reads.ts";
+import {
+  browserName,
+  DashboardReads,
+  SUGGESTION_SCAN_LIMIT,
+} from "./dashboard-reads.ts";
 import { HISTORY_GROUP } from "./store.ts";
 
 const databases: DatabaseSync[] = [];
@@ -52,7 +56,7 @@ function fixture() {
  CREATE TABLE events(id TEXT,at TEXT,details TEXT,type TEXT,instance_id TEXT,peer_ip TEXT,question TEXT GENERATED ALWAYS AS (json_extract(details,'$.question')) VIRTUAL,history_group TEXT GENERATED ALWAYS AS (${HISTORY_GROUP}) VIRTUAL);
  CREATE TABLE metrics(instance_id TEXT,direction TEXT,peer_ip TEXT,protocol INTEGER,port INTEGER,resolution INTEGER,bucket TEXT,sent TEXT,received TEXT);
  CREATE TABLE blocked_counts(instance_id TEXT,rule_id TEXT,direction TEXT,resolution INTEGER,bucket TEXT,packets INTEGER);
- CREATE TABLE dns_answers(event_id TEXT,instance_id TEXT,address TEXT,at TEXT);`);
+ CREATE TABLE dns_answers(event_id TEXT,instance_id TEXT,address TEXT,at TEXT,suggestion_client_ip TEXT);`);
 
   return { database, reads: new DashboardReads(database) };
 }
@@ -76,17 +80,33 @@ describe("typed dashboard reads", () => {
       insert.run(
         id,
         observedAt,
-        JSON.stringify({ id, observedAt, type, instanceId, ...fields }),
+        JSON.stringify({
+          id,
+          observedAt,
+          type,
+          source: type === "dns" ? "resolver-gate" : "suricata",
+          instanceId,
+          ...fields,
+        }),
         type,
         instanceId,
         fields.peerIp ?? null,
       );
 
+      // Ingest indexes the client of confirmed answers only.
       if (type === "dns")
         for (const address of fields.details.addresses!.split(", "))
           database
-            .prepare("INSERT INTO dns_answers VALUES(?,?,?,?)")
-            .run(id, instanceId, address, observedAt);
+            .prepare("INSERT INTO dns_answers VALUES(?,?,?,?,?)")
+            .run(
+              id,
+              instanceId,
+              address,
+              observedAt,
+              fields.details.outcome === "confirmed"
+                ? fields.details.clientIp!
+                : null,
+            );
     };
 
     event("2026-10-10T00:00:01.000Z", "dns", {
@@ -121,6 +141,158 @@ describe("typed dashboard reads", () => {
         },
       ],
     });
+
+    const client = { address: "10.22.241.10", at: "2026-10-10T00:06:00.000Z" };
+
+    const suggest = (clients = [client]) =>
+      reads.requestSuggestions(instanceId, "10.22.242.99", clients);
+
+    const answer = (
+      observedAt: string,
+      question: string,
+      clientIp = client.address,
+      outcome = "confirmed",
+    ) =>
+      event(observedAt, "dns", {
+        question,
+        details: { addresses: "10.22.242.99", clientIp, outcome },
+      });
+
+    answer("2026-10-10T00:00:59.000Z", "old.example");
+    answer("2026-10-10T00:05:00.000Z", "other-client.example", "10.22.241.11");
+    answer("2026-10-10T00:06:01.000Z", "future.example");
+    answer(
+      "2026-10-10T00:05:00.000Z",
+      "failed.example",
+      client.address,
+      "failed",
+    );
+    answer("2026-10-10T00:05:00.000Z", "api.example");
+
+    expect(suggest()).toEqual({ hostnames: ["api.example"], complete: true });
+    answer("2026-10-10T00:05:30.000Z", "cdn.example");
+    expect(suggest().hostnames).toEqual(["cdn.example", "api.example"]);
+
+    // Each client's answers end at its own latest attempt.
+    const later = { address: "10.22.241.11", at: "2026-10-10T00:20:00.000Z" };
+    answer("2026-10-10T00:18:00.000Z", "later.example", later.address);
+    expect(suggest([client, later]).hostnames).toEqual([
+      "later.example",
+      "cdn.example",
+      "api.example",
+    ]);
+    expect(suggest().hostnames).not.toContain("later.example");
+  });
+  it("suggests every name behind repeated answers and other clients' answers, and reports names left out", () => {
+    const { database, reads } = fixture();
+    const insert = database.prepare("INSERT INTO events VALUES(?,?,?,?,?,?)");
+
+    const addAnswer = database.prepare(
+      "INSERT INTO dns_answers VALUES(?,?,?,?,?)",
+    );
+
+    const latest = "2026-10-10T00:05:00.000Z";
+
+    const answer = (question: string, clientIp: string, offset: number) => {
+      const id = randomUUID();
+      const observedAt = new Date(Date.parse(latest) - offset).toISOString();
+
+      insert.run(
+        id,
+        observedAt,
+        JSON.stringify({
+          id,
+          observedAt,
+          type: "dns",
+          source: "resolver-gate",
+          instanceId,
+          question,
+          details: {
+            addresses: "10.22.242.99",
+            clientIp,
+            outcome: "confirmed",
+          },
+        }),
+        "dns",
+        instanceId,
+        null,
+      );
+      addAnswer.run(id, instanceId, "10.22.242.99", observedAt, clientIp);
+    };
+
+    const suggest = () =>
+      reads.requestSuggestions(instanceId, "10.22.242.99", [
+        { address: "10.22.241.10", at: latest },
+      ]);
+
+    database.exec("BEGIN");
+    answer("rare.example", "10.22.241.10", 200_000);
+    answer("target.example", "10.22.241.10", 150_000);
+
+    for (let index = 0; index < 600; index++) {
+      answer("repeat.example", "10.22.241.10", 1_000 + index);
+      answer("crowd.example", "10.22.241.11", 1_000 + index);
+    }
+
+    database.exec("COMMIT");
+    expect(suggest()).toEqual({
+      hostnames: ["repeat.example", "target.example", "rare.example"],
+      complete: true,
+    });
+
+    for (let index = 0; index < 18; index++)
+      answer(`name${index}.example`, "10.22.241.10", 100_000 + index);
+    expect(suggest()).toMatchObject({ complete: false });
+    expect(suggest().hostnames).toHaveLength(20);
+  });
+  it("reports suggestions incomplete when a client's answers exceed the scan limit", () => {
+    const { database, reads } = fixture();
+    const insert = database.prepare("INSERT INTO events VALUES(?,?,?,?,?,?)");
+
+    const addAnswer = database.prepare(
+      "INSERT INTO dns_answers VALUES(?,?,?,?,?)",
+    );
+
+    const latest = "2026-10-10T00:05:00.000Z";
+
+    database.exec("BEGIN");
+
+    for (let index = 0; index <= SUGGESTION_SCAN_LIMIT; index++) {
+      const id = randomUUID();
+
+      const observedAt = new Date(
+        Date.parse(latest) - index * 10,
+      ).toISOString();
+
+      insert.run(
+        id,
+        observedAt,
+        JSON.stringify({
+          id,
+          observedAt,
+          type: "dns",
+          source: "resolver-gate",
+          instanceId,
+          question: "busy.example",
+          details: {
+            addresses: "10.22.242.99",
+            clientIp: "10.22.241.10",
+            outcome: "confirmed",
+          },
+        }),
+        "dns",
+        instanceId,
+        null,
+      );
+      addAnswer.run(id, instanceId, "10.22.242.99", observedAt, "10.22.241.10");
+    }
+
+    database.exec("COMMIT");
+    expect(
+      reads.requestSuggestions(instanceId, "10.22.242.99", [
+        { address: "10.22.241.10", at: latest },
+      ]),
+    ).toEqual({ hostnames: ["busy.example"], complete: false });
   });
   it("groups only unambiguous observed names and filters events to the selected period and service", async () => {
     const { database, reads } = fixture();

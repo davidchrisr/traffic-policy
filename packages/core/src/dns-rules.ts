@@ -41,6 +41,7 @@ export class DnsRuleIndex {
   private readonly domains: NameRules = new Map();
   private readonly anyPeer = new Map<string | null, Rule[]>();
   private readonly localNetworks: Network[];
+  private readonly releaseBeforeApproval: boolean;
   // Each scope path's context, and the paths of each instance that some address has, by family.
   private readonly paths = new Map<string, SubjectContext>();
   private readonly instancePaths = new Map<string, Record<4 | 6, string[]>>();
@@ -60,6 +61,8 @@ export class DnsRuleIndex {
       return network;
     };
 
+    this.releaseBeforeApproval =
+      policy.settings.dnsReleaseMode === "before-approval";
     this.localNetworks = policy.settings.localNetworks.map(parseNetwork);
     this.tree = scopeTree(policy);
 
@@ -126,8 +129,12 @@ export class DnsRuleIndex {
     return subjectContext(this.tree, address);
   }
 
-  // Equals decideDns(policy.rules, ...) but ranks only the rules that can apply to the question.
+  // Releasing first admits the question without granting a service. Otherwise rank the rules
+  // that can apply to the question, as decideDns does.
   decide(context: SubjectContext, question: string, now: number): DnsDecision {
+    if (this.releaseBeforeApproval)
+      return { allowed: true, ruleId: null, catchAll: false };
+
     const candidates = [...(this.anyPeer.get(null) ?? [])];
 
     for (const scope of context.ranks.keys())

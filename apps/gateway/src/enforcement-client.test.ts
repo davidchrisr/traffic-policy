@@ -120,6 +120,7 @@ function protocol() {
       },
     ],
     settings: {
+      dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,
       permissionLimit: 4096,
       trafficHistoryBytes: "268435456",

@@ -347,6 +347,18 @@ export const requestNamesSchema = z
 
 export type RequestNames = z.infer<typeof requestNamesSchema>;
 
+// Hostnames for a connection request's rule: names its clients' confirmed DNS answers resolved to
+// the request's address within five minutes before each client's latest attempt, newest first.
+// `complete` is false when the scan or the name limit left some out.
+export const requestSuggestionsSchema = z
+  .object({
+    hostnames: z.array(nameSchema).max(20),
+    complete: z.boolean(),
+  })
+  .strict();
+
+export type RequestSuggestions = z.infer<typeof requestSuggestionsSchema>;
+
 // The main list of Requests, or dismissed hosts only.
 export const requestsViewSchema = z.enum(["main", "dismissed"]);
 

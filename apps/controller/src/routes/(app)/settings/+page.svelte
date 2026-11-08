@@ -536,6 +536,29 @@
       </header>
       <div class="setting-row">
         <div>
+          <Label for="dns-release-mode">DNS release mode</Label>
+          <p class="field-help muted">
+            Releasing first sends lookups upstream before connections are
+            approved.
+          </p>
+        </div>
+        <div class="field-group">
+          <Choice
+            id="dns-release-mode"
+            label="DNS release mode"
+            bind:value={settings.dnsReleaseMode}
+            options={[
+              {
+                value: "before-approval",
+                label: "Before approval",
+              },
+              { value: "require-allow", label: "After an Allow rule" },
+            ]}
+          />
+        </div>
+      </div>
+      <div class="setting-row">
+        <div>
           <Label for="grace">DNS grace period in seconds</Label>
           <p class="field-help muted">
             Keeps a DNS permission this long after its record expires.

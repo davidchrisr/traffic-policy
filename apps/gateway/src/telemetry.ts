@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { eventSchema } from "@traffic-policy/contracts";
-import { InstanceOwners } from "@traffic-policy/core";
+import { InstanceOwners, terminalAnswers } from "@traffic-policy/core";
 import type {
   GatewayEvent,
   Resolution,
@@ -66,6 +66,18 @@ const blank = (at: string): GatewayEvent => ({
 const uuid = (value: string) =>
   `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
 
+// The addresses the question resolved to, as lease learning reads them: only those of the name at
+// the end of its CNAME chain. An invalid chain resolves the question to no address.
+function answeredAddresses(resolution: Resolution): string {
+  try {
+    return terminalAnswers(resolution)
+      .map((answer) => answer.value)
+      .join(", ");
+  } catch {
+    return "";
+  }
+}
+
 export function dnsObservation(
   resolution: Resolution,
   confirmation: ResolutionReceipt | null,
@@ -73,10 +85,7 @@ export function dnsObservation(
   const details: GatewayEvent["details"] = {
     outcome: confirmation ? "confirmed" : "failed",
     clientIp: resolution.clientIp,
-    addresses: resolution.answers
-      .filter((answer) => answer.type !== "CNAME")
-      .map((answer) => answer.value)
-      .join(", "),
+    addresses: answeredAddresses(resolution),
     responseAt: resolution.responseAt,
   };
 

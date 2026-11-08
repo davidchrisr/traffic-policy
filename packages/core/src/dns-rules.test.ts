@@ -83,6 +83,7 @@ function policy(rules: Rule[]): Policy {
       }),
     ],
     settings: {
+      dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,
       permissionLimit: 4096,
       trafficHistoryBytes: "268435456",
@@ -145,6 +146,28 @@ function reference(value: Policy, answer: AddressLease): Rule[] {
 }
 
 describe("DNS admission", () => {
+  it.each(["before-approval", "require-allow"] as const)(
+    "uses %s release mode without granting packet permissions",
+    (dnsReleaseMode) => {
+      const value = policy([]);
+
+      const index = new DnsRuleIndex({
+        ...value,
+        settings: { ...value.settings, dnsReleaseMode },
+      });
+
+      const context = index.context("10.0.0.1")!;
+
+      expect(index.decide(context, "unapproved.example", now).allowed).toBe(
+        dnsReleaseMode === "before-approval",
+      );
+      expect(index.decide(context, ".", now).allowed).toBe(
+        dnsReleaseMode === "before-approval",
+      );
+      expect(index.context("10.0.0.99")).toBeNull();
+      expect(index.match(lease("unapproved.example"))).toEqual([]);
+    },
+  );
   it("keeps an unresolved question in review when only one service has an explicit Block", () => {
     const value = policy([
       rule(1, {

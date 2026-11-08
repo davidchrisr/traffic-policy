@@ -80,6 +80,7 @@ function policy(rules: Rule[], instances?: Policy["instances"]): Policy {
     ],
     rules: [...rules, catchAll()],
     settings: {
+      dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,
       permissionLimit: 4096,
       trafficHistoryBytes: "268435456",

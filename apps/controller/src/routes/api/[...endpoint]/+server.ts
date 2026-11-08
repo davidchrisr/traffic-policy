@@ -275,6 +275,19 @@ const handle: RequestHandler = async (event) => {
     if (namesFor && method === "GET")
       return Response.json(store().requestNames(namesFor));
 
+    const suggestionsFor = path?.match(/^requests\/([^/]+)\/suggestions$/)?.[1];
+
+    if (suggestionsFor && method === "GET") {
+      const client = event.url.searchParams.get("client");
+
+      return Response.json(
+        store().requestSuggestions(
+          suggestionsFor,
+          client === null ? null : ipSchema.parse(client),
+        ),
+      );
+    }
+
     if (path === "monitor" && method === "GET") {
       const query = event.url.searchParams;
 

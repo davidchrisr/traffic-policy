@@ -408,6 +408,7 @@ export function historyLimitBytes(
 
 export const settingsSchema = z
   .object({
+    dnsReleaseMode: z.enum(["before-approval", "require-allow"]),
     dnsGraceSeconds: z.number().int().min(0).max(604800),
     permissionLimit: z.number().int().min(1).max(100000),
     trafficHistoryBytes: uint64Schema,

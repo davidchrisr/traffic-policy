@@ -4,6 +4,7 @@ import type {
   GatewayReceipt,
   Policy,
 } from "@traffic-policy/contracts";
+import { ScopeTree } from "@traffic-policy/contracts";
 import {
   DnsRuleIndex,
   iteratePermissionsForLeases,
@@ -17,6 +18,7 @@ import {
 } from "@traffic-policy/core/nftables";
 import { ServiceError } from "@traffic-policy/core/io";
 import {
+  DNS_INSTANCE_LEASE_LIMIT,
   DNS_STATE_LIMIT,
   stateBytes,
   type Snapshot,
@@ -74,6 +76,13 @@ const stateError = () =>
     "DNS memory state exceeds its allocation. Reduce active resolutions or matching DNS rules.",
   );
 
+const instanceStateError = () =>
+  new ServiceError(
+    507,
+    "dns_instance_capacity",
+    "This instance holds its full allocation of DNS answers. Reduce its active resolutions.",
+  );
+
 const assertBytes = (value: number) => {
   if (value > 67108864)
     throw new ServiceError(
@@ -91,6 +100,9 @@ export class DnsLedger {
   readonly leaseDeadlines = new Deadlines<Learned>();
   readonly permissionDeadlines = new Deadlines<Contribution>();
   readonly grantDeadlines = new Deadlines<Grant>();
+  // Leases held by each instance, through the scope paths of its addresses.
+  readonly instanceLeases = new Map<string, number>();
+  private readonly pathInstances = new Map<string, string>();
   readonly baseBytes: number;
   leaseBytes = 0;
   permissionBytes = 0;
@@ -115,6 +127,12 @@ export class DnsLedger {
       stateBytes({ policy, receipt, leases: [], permissions: [] }),
     );
 
+    for (const entry of index.tree.entries)
+      this.pathInstances.set(
+        ScopeTree.pathKey(entry),
+        ScopeTree.instanceOf(entry),
+      );
+
     for (const value of initial) {
       const key = leaseKey(value);
 
@@ -130,6 +148,11 @@ export class DnsLedger {
       this.leases.set(key, entry);
       this.leaseBytes += entry.bytes;
       this.leaseDeadlines.set(entry, entry.deadline);
+      const instance = this.instanceOf(value);
+      this.instanceLeases.set(
+        instance,
+        (this.instanceLeases.get(instance) ?? 0) + 1,
+      );
     }
 
     for (const value of permissions) {
@@ -186,6 +209,14 @@ export class DnsLedger {
       this.associations > DNS_STATE_LIMIT
     )
       throw stateError();
+  }
+  // Leases are reconciled to the policy's scope paths, so a lease without one is a defect.
+  instanceOf(lease: AddressLease): string {
+    const instance = this.pathInstances.get(lease.path);
+
+    if (instance === undefined) throw new Error("DNS lease has no scope path");
+
+    return instance;
   }
   emptyGrant(value: Permission): Grant {
     return {
@@ -269,6 +300,8 @@ export class DnsBatch {
   private leaseBytes: number;
   private permissionBytes: number;
   private leases: number;
+  // Each instance's lease count change from the ledger's.
+  private readonly instanceLeases = new Map<string, number>();
   private associations: number;
   private grants: number;
 
@@ -370,10 +403,27 @@ export class DnsBatch {
       if (!group?.size) this.groups.delete(change.base.group);
     }
   }
+  private countInstance(lease: AddressLease, change: number) {
+    const instance = this.base.instanceOf(lease);
+    this.instanceLeases.set(
+      instance,
+      (this.instanceLeases.get(instance) ?? 0) + change,
+    );
+  }
+  private instanceCount(instance: string) {
+    return (
+      (this.base.instanceLeases.get(instance) ?? 0) +
+      (this.instanceLeases.get(instance) ?? 0)
+    );
+  }
   private replace(key: string, next: Learned | null, now: number) {
     const old = this.lease(key);
 
     if (old === next) return;
+
+    // A lease keeps its key, and so its scope path and instance, when replaced.
+    if (!old) this.countInstance(next!.value, 1);
+    else if (!next) this.countInstance(old.value, -1);
 
     if (old) {
       this.leaseBytes -= old.bytes;
@@ -483,6 +533,7 @@ export class DnsBatch {
     let retainedBytes = this.permissionBytes;
     let plannedLeaseBytes = this.leaseBytes;
     let plannedLeases = this.leases;
+    const plannedInstances = new Map<string, number>();
 
     for (const [key, value] of replacements) {
       const old = this.lease(key);
@@ -490,7 +541,14 @@ export class DnsBatch {
       retainedBytes -= old?.permissionBytes ?? 0;
       plannedLeaseBytes += bytes(value) - (old?.bytes ?? 0);
 
-      if (!old) plannedLeases++;
+      if (!old) {
+        plannedLeases++;
+        const instance = this.base.instanceOf(value);
+        plannedInstances.set(
+          instance,
+          (plannedInstances.get(instance) ?? 0) + 1,
+        );
+      }
     }
 
     if (plannedLeases > DNS_STATE_LIMIT) throw stateError();
@@ -544,6 +602,11 @@ export class DnsBatch {
 
       prepared.set(key, entry);
     }
+
+    // Refreshing a held lease adds none, so an instance at its allocation keeps its answers.
+    for (const [instance, added] of plannedInstances)
+      if (this.instanceCount(instance) + added > DNS_INSTANCE_LEASE_LIMIT)
+        throw instanceStateError();
 
     const undo = new Map<string, Learned | null>();
 
@@ -670,6 +733,13 @@ export class DnsBatch {
 
         group.set(grant.address, grant);
       }
+    }
+
+    for (const [instance, change] of this.instanceLeases) {
+      const count = (this.base.instanceLeases.get(instance) ?? 0) + change;
+
+      if (count) this.base.instanceLeases.set(instance, count);
+      else this.base.instanceLeases.delete(instance);
     }
 
     this.base.leaseBytes = this.leaseBytes;
