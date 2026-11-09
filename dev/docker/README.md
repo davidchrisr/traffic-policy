@@ -25,6 +25,16 @@ Set `COMPOSE_PROJECT_NAME`, `TP_BROWSER_PORT`, `TP_UPSTREAM_SUBNET`, and
 and browser ports, and nonoverlapping private subnets that also avoid the host's
 routes. The example allocations must be adjusted for the host.
 
+Use a short `COMPOSE_PROJECT_NAME` made of lowercase alphanumeric groups
+separated by single hyphens, such as `tp-dev-development`, so it also forms a
+valid runtime image name.
+
+The source mount resolves relative to this checkout. Run each independent stack
+from its own worktree or checkout, including a separate source directory when
+copying to another host. Its runtime image is named
+`<COMPOSE_PROJECT_NAME>-runtime:dev`; build outputs and application state use
+project-specific volumes. Only the dependency cache is shared.
+
 Set `TP_CONTROLLER_ADDRESS` within the upstream subnet and `TP_CLIENT_ADDRESS`
 within the clients subnet. Set `TP_ORIGIN` to match the browser address and
 port. Use this env file for every operation on the stack; in another shell, set

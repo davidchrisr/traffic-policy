@@ -4,7 +4,7 @@
 # The image is built here and never pulled. Every service names the build, because nerdctl compose
 # pulls a missing image before building it.
 x-runtime: &runtime
-  image: traffic-policy-dev-runtime:1
+  image: ${COMPOSE_PROJECT_NAME:?Set COMPOSE_PROJECT_NAME in the env file}-runtime:dev
   build: .
   restart: "no"
   # Each service adds back only the capabilities its entry script and processes use.
