@@ -1,8 +1,7 @@
 # Native Traffic Policy architecture
 
 Traffic Policy uses a Debian/nftables backend, a Bun gateway and a SvelteKit
-controller. [Setup](SETUP.md) describes deployment; [benchmarks](BENCHMARKS.md)
-records the measured DNS workload and its limits.
+controller. [Setup](SETUP.md) describes deployment.
 
 ## Runtime boundaries
 
@@ -472,8 +471,7 @@ connections avoid opening a new connection for each lookup. The profile includes
 16,384 pending DNS history records, a 64 MiB pending-history allocation, and
 16,384 gateway and enforcement service file descriptors. The separate DNS TCP
 accept backlog is unchanged; passing ordinary TCP checks is not a
-4,096-connection TCP burst guarantee. See [benchmarks](BENCHMARKS.md) for
-measured UDP burst throughput.
+4,096-connection TCP burst guarantee.
 
 Rules use deterministic field precedence and separate manual enablement from
 time eligibility. A permanent global catch-all is required in each direction.

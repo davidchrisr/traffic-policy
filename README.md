@@ -3,10 +3,6 @@
 Network visibility and control for a Linux gateway. Monitor traffic, manage
 firewall rules and review connection requests through a self-hosted dashboard.
 
-Handles over **5,000 DNS queries per second during short bursts on a two-vCPU
-gateway**, measured with traffic capture and history collection enabled. See
-[benchmarks](docs/BENCHMARKS.md) for the workload and results.
-
 ## What it does
 
 - Apply global, instance, and address rules for addresses, domains, protocols
@@ -14,7 +10,8 @@ gateway**, measured with traffic capture and history collection enabled. See
   whole subnets; nested ones inherit their parents' rules.
 - Drop traffic from hosts no instance covers and ask to register the ones seen
   on any interface other than upstream ones.
-- Authorize DNS-derived destinations before releasing permitted DNS answers.
+- Choose whether DNS answers require prior connection approval. Connection rules
+  apply in either mode.
 - Monitor sent and received traffic, group peers by domain and inspect
   connection evidence.
 - Review blocked requests and policy changes in the dashboard.
@@ -96,7 +93,7 @@ automatically.
 | `examples/`           | Deployment configuration templates                                  |
 | `dev/docker/`         | Development stack for end-to-end checks                             |
 | `DESIGN.md`           | Visual design and component recipes                                 |
-| `docs/`               | Architecture, setup, product behavior and benchmarks                |
+| `docs/`               | Architecture, setup, and product behavior                           |
 
 ## Security
 
