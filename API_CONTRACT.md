@@ -72,7 +72,7 @@ oldest retained sample or `null`; it is `null` for Allow rules.
 Settings require `dnsReleaseMode`: `before-approval` releases validated DNS
 answers for registered clients before connection approval; `require-allow`
 requires an effective outgoing Allow. Connection rules apply in both modes. The
-example settings use `before-approval`.
+example settings use `require-allow`.
 
 Renewal requires `durationSeconds`, counted from now; expiry never silently
 becomes permanent. Requests reads include the current `rules` so the editor can

@@ -314,11 +314,11 @@ incorrect platform clock can change when deadlines take effect.
 
 The gateway's local resolver gate validates and records DNS answers for
 registered clients. `dnsReleaseMode` selects whether connection rules can
-withhold those answers. The example settings use `before-approval`, which
-releases answers before connection approval and exposes queried names upstream,
-including names whose connections are blocked. Packet rules still decide every
-connection. `require-allow` retains approval before release, using the existing
-rules without a separate DNS allowlist or Technitium policy mirror. Technitium
+withhold those answers. The example settings use `require-allow`, which requires
+approval before release, using the existing rules without a separate DNS
+allowlist or Technitium policy mirror. `before-approval` releases answers before
+connection approval and exposes queried names upstream, including names whose
+connections are blocked. Packet rules still decide every connection. Technitium
 can be the configured upstream resolver. Unregistered clients remain refused.
 
 In `require-allow` mode, a lookup is allowed when at least one outgoing service
