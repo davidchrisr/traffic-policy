@@ -115,9 +115,8 @@ describe("policy change details", () => {
       changed,
     ]);
 
-    expect(update!.title).toBe(
-      "Changed rule: Client · Outgoing · 10.22.242.99 · UDP 18100",
-    );
+    expect(update!.title).toBe("Changed rule");
+    expect(update!.rule).toEqual(changed);
     expect(
       update!.lines.map((line) => [line.label, line.before, line.after]),
     ).toEqual([
@@ -147,9 +146,8 @@ describe("policy change details", () => {
       [],
     );
 
-    expect(deleted!.title).toBe(
-      "Deleted Allow rule: Client · Outgoing · 10.22.242.99 · UDP 18099",
-    );
+    expect(deleted!.title).toBe("Deleted Allow rule");
+    expect(deleted!.rule).toEqual(rule);
     expect(deleted!.lines).toEqual([
       {
         label: "Ends",

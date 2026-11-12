@@ -154,8 +154,8 @@
         <Time class="muted numeric w-40 shrink-0 text-xs" value={item.at} />
         <div class="min-w-0">
           <p>{sentence(item.action)}</p>
-          <p class="muted break-words text-xs">
-            {item.actor}{#if item.client}{` (${[item.client.browser, item.client.address].filter(Boolean).join(", ")})`}{/if}{#if item.subjectRule}{separator}{#if model.rules.some((rule) => rule.id === item.subjectRule?.id)}<a
+          {#if item.subjectRule}<p class="break-words text-xs">
+              {#if model.rules.some((rule) => rule.id === item.subjectRule?.id)}<a
                   class="link-subtle"
                   href={`/rules?rule=${item.subjectRule.id}`}
                   ><RuleLabel
@@ -165,8 +165,14 @@
                 >{:else}<RuleLabel
                   rule={item.subjectRule}
                   instances={model.instances}
-                />{/if}{:else if (item.subjectLabel ?? item.subject) !== item.actor}{separator}{item.subjectLabel ??
-                item.subject}{/if}
+                />{/if}
+            </p>{:else if (item.subjectLabel ?? item.subject) !== item.actor}<p
+              class="break-words text-xs"
+            >
+              {item.subjectLabel ?? item.subject}
+            </p>{/if}
+          <p class="muted break-words text-xs">
+            {item.actor}{#if item.client}{` (${[item.client.browser, item.client.address].filter(Boolean).join(", ")})`}{/if}
           </p>
           {#if item.changes.length || item.revisions || item.subjectLabel}<details
               class="muted mt-1 text-xs"
@@ -177,7 +183,13 @@
               {#each describeChanges(item.changes, model.instances, item.subjectRule ? [item.subjectRule, ...model.rules] : model.rules) as change, index (index)}<div
                   class="audit-change"
                 >
-                  <p class="text-foreground">{change.title}</p>
+                  <p class="text-foreground">
+                    {change.title}{#if change.rule && change.rule.id !== item.subjectRule?.id}:
+                      <RuleLabel
+                        rule={change.rule}
+                        instances={model.instances}
+                      />{/if}
+                  </p>
                   {#if change.lines.length}<dl>
                       {#each change.lines as line (line.label)}<dt>
                           {line.label}
@@ -194,7 +206,7 @@
                     </dl>{/if}
                 </div>{/each}
               {#if item.revisions}<p class="mt-1">
-                  Revision {item.revisions.before} → {item.revisions.after}
+                  Revision {item.revisions.after}
                 </p>{/if}
               {#if item.subjectLabel}<p class="mt-1 break-all">
                   Identifier <span class="font-mono">{item.subject}</span>

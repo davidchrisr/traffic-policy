@@ -10,7 +10,6 @@ import {
 } from "@traffic-policy/contracts";
 import type { AuditChange } from "@traffic-policy/contracts/dashboard";
 import {
-  describeRule,
   directionLabels,
   ruleServiceLabel,
   subjectLabel,
@@ -38,6 +37,8 @@ export interface ChangeLine {
 
 export interface ChangeView {
   title: string;
+  // The rule the title names, shown after it.
+  rule?: Rule;
   lines: ChangeLine[];
 }
 
@@ -182,7 +183,7 @@ const settingsFields = {
   },
 } satisfies Record<string, Field>;
 
-// Rule fields in the editor's order; protocol stands for the whole service.
+// Rule fields in History's order; protocol stands for the whole service.
 const RULE_ORDER = [
   "subject",
   "direction",
@@ -252,8 +253,12 @@ function ruleView(
     const rule = ruleSchema.safeParse(whole);
     const action = whole.action === "allow" ? "Allow" : "Block";
 
+    const title = `${change.before ? "Deleted" : "Added"} ${action} rule`;
+
     return {
-      title: `${change.before ? "Deleted" : "Added"} ${action} rule: ${rule.success ? describeRule(rule.data, instances) : change.id}`,
+      ...(rule.success
+        ? { title, rule: rule.data }
+        : { title: `${title}: ${change.id}` }),
       lines: lines(
         change,
         ruleFields,
@@ -271,9 +276,8 @@ function ruleView(
   const current = rules.find((rule) => rule.id === change.id);
 
   return {
-    title: current
-      ? `Changed rule: ${describeRule(current, instances)}`
-      : "Changed rule",
+    title: "Changed rule",
+    ...(current && { rule: current }),
     lines: lines(
       change,
       ruleFields,

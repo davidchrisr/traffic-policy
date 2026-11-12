@@ -207,9 +207,11 @@ errors remain in the dialog with field descriptions. Failed saves preserve the
 draft, and unsaved edits prevent Escape/outside dismissal. Cancel explicitly
 discards the draft.
 
-History uses compact Changes, Traffic events, and System status views.
-Expandable What changed details display each field as label and before → after
-value, followed by revisions and the recorded identifier.
+History uses compact Changes, Traffic events, and System status views. A change
+shows its action, then what it was about, then who made it. Expandable What
+changed details display each field as label and before → after value, followed
+by the resulting revision and the recorded identifier; a change title names its
+rule only when that is not the entry's own rule.
 
 Rules and Requests use compact instance groups with a contextual inspector.
 Rules filters place High priority before Temporary and keep Disabled and Expired
