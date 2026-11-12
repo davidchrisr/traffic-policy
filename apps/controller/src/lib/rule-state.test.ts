@@ -337,10 +337,17 @@ describe("Monitor rule state", () => {
     // No rule decides the lookup, so the inspector names the accept instead, once for each accept.
     expect(inspectorRules([lookup])).toEqual([]);
     expect(inspectorBuiltIns([lookup, lookup, dhcp])).toEqual([
-      { direction: "outgoing", label: "DNS · Gateway · UDP:5353" },
       {
         direction: "outgoing",
-        label: "DHCP · Gateway · UDP:67 · from port 68",
+        label: "DNS · Gateway · UDP 5353",
+        name: "DNS",
+        details: ["UDP 5353"],
+      },
+      {
+        direction: "outgoing",
+        label: "DHCP · Gateway · UDP 67 · from port 68",
+        name: "DHCP",
+        details: ["UDP 67", "from port 68"],
       },
     ]);
     expect(
@@ -485,7 +492,7 @@ describe("Monitor rule state", () => {
 
     expect(decision?.state).toBe("block");
     expect(stateDescription("block", decision)).toBe(
-      "Blocked by the catch-all. nas.home resolves to 192.168.1.5, which is not a public address, so nas.home · any does not apply. Add the address to the rule's permitted destination networks for it to apply.",
+      "Blocked by the catch-all. nas.home resolves to 192.168.1.5, which is not a public address, so nas.home does not apply. Add the address to the rule's networks for it to apply.",
     );
     expect(
       inspectorRules([decision]).map(({ rule: value, note }) => [
@@ -495,7 +502,7 @@ describe("Monitor rule state", () => {
     ).toEqual([
       [
         named.id,
-        "No effect for 192.168.1.5: not a public address. Add the address to its permitted destination networks for it to apply.",
+        "No effect for 192.168.1.5: not a public address. Add the address to its networks for it to apply.",
       ],
       [catchAll.id, null],
     ]);

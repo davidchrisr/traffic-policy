@@ -297,7 +297,7 @@ export function ruleMatches(
 }
 
 // Why a hostname or domain rule refuses a DNS answer address, or null when it admits it. A rule
-// with permitted destination networks admits only those; one without admits public addresses only.
+// limited to networks admits only those; one without admits public addresses only.
 export function dnsAddressRefusal(
   rule: Pick<Rule, "dnsDestinations">,
   address: string,
@@ -369,22 +369,35 @@ const protocolNames = new Map([
   [58, "ICMPv6"],
 ]);
 
-// A protocol with a rule's port ranges.
+// A protocol with a rule's port ranges; null when neither restricts the service.
+export function serviceRangesLabel(
+  protocol: number,
+  ports: PortRange[] | null,
+): string;
 export function serviceRangesLabel(
   protocol: number | null,
   ports: PortRange[] | null,
-): string {
-  if (protocol === null && ports === null) return "any";
+): string | null;
+export function serviceRangesLabel(
+  protocol: number | null,
+  ports: PortRange[] | null,
+): string | null {
+  if (protocol === null && ports === null) return null;
 
   const name =
     protocol === null
       ? "TCP/UDP"
       : (protocolNames.get(protocol) ?? `Protocol ${protocol}`);
 
-  return ports === null ? name : `${name}:${formatPorts(ports, "–")}`;
+  return ports === null ? name : `${name} ${formatPorts(ports, "–")}`;
 }
 
-// A protocol with an observed port.
+// A protocol with an observed port; null when neither is known.
+export function serviceLabel(protocol: number, port: number | null): string;
+export function serviceLabel(
+  protocol: number | null,
+  port: number | null,
+): string | null;
 export function serviceLabel(protocol: number | null, port: number | null) {
   return serviceRangesLabel(
     protocol,
@@ -392,19 +405,33 @@ export function serviceLabel(protocol: number | null, port: number | null) {
   );
 }
 
+export function peerLabel(peer: Peer): string {
+  return peer.kind === "any"
+    ? "Any"
+    : peer.kind === "gateway"
+      ? "Gateway"
+      : peer.value;
+}
+
+// A rule's service with its ICMP conditions; null when the service is unrestricted.
+export function ruleServiceLabel(
+  rule: Pick<Rule, "protocol" | "ports" | "icmpType" | "icmpCode">,
+): string | null {
+  const service = serviceRangesLabel(rule.protocol, rule.ports);
+
+  if (service === null) return null;
+
+  return `${service}${rule.icmpType === null ? "" : ` type ${rule.icmpType}`}${rule.icmpCode === null ? "" : ` code ${rule.icmpCode}`}`;
+}
+
 export function ruleScopeLabel(
   rule: Pick<Rule, "peer" | "protocol" | "ports" | "icmpType" | "icmpCode">,
 ): string {
-  const peer =
-    rule.peer.kind === "any"
-      ? "Any peer"
-      : rule.peer.kind === "gateway"
-        ? "Gateway"
-        : rule.peer.value;
+  const service = ruleServiceLabel(rule);
 
-  const icmp = `${rule.icmpType === null ? "" : ` type ${rule.icmpType}`}${rule.icmpCode === null ? "" : ` code ${rule.icmpCode}`}`;
-
-  return `${peer} · ${serviceRangesLabel(rule.protocol, rule.ports)}${icmp}`;
+  return service === null
+    ? peerLabel(rule.peer)
+    : `${peerLabel(rule.peer)} · ${service}`;
 }
 
 export const directionLabels = {
@@ -419,7 +446,7 @@ export function subjectLabel(
 ): string {
   switch (subject.kind) {
     case "global":
-      return "Any instance";
+      return "Any";
     case "instance":
       return (
         instances.find((value) => value.id === subject.instanceId)?.name ??
@@ -461,7 +488,9 @@ export function subjectPath(
 }
 
 export function describeRule(rule: Rule, instances: Instance[] = []): string {
-  return `${subjectLabel(rule.subject, instances)} · ${directionLabels[rule.direction]} · ${ruleScopeLabel(rule)}`;
+  return isCatchAll(rule)
+    ? `Catch-all · ${directionLabels[rule.direction]}`
+    : `${subjectLabel(rule.subject, instances)} · ${directionLabels[rule.direction]} · ${ruleScopeLabel(rule)}`;
 }
 
 export function isCatchAll(

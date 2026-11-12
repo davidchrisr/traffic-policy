@@ -967,7 +967,7 @@ describe("controller contracts and persistence", () => {
         store.requests().requests.find((request) => request.id === "nas")
           ?.state;
 
-      // Without permitted destination networks the rule refuses the private answer.
+      // Without networks the rule refuses the private answer.
       store.mutation(
         store.desired().revision,
         "rule-created",
@@ -1633,8 +1633,8 @@ describe("controller contracts and persistence", () => {
         );
 
       expect(ruleLabels()).toEqual({
-        "rule-updated": "Current name · Both directions · Any peer · TCP:8443",
-        "rule-created": "Current name · Both directions · Any peer · TCP:443",
+        "rule-updated": "Current name · Both directions · Any · TCP 8443",
+        "rule-created": "Current name · Both directions · Any · TCP 443",
       });
       expect(
         rows.find((item) => item.action === "instance-updated")?.changes,

@@ -565,6 +565,26 @@
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
+/* Any and Gateway are boxed so they stand apart from names people enter. The tint shows on any
+   background, highlighted menu items included; inside fields the text keeps the field's size. */
+.built-in-value {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 0 0.375em;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--foreground) 12%, transparent);
+  font-size: 0.857em;
+  line-height: 1.5;
+  white-space: nowrap;
+  /* The smaller text sits low on the baseline; this centers the box on the text beside it. */
+  vertical-align: 0.1em;
+}
+[data-slot="select-trigger"] .built-in-value,
+[data-slot="select-item"] .built-in-value {
+  font-size: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+}
 .inspector-rule,
 .inspector-event {
   min-height: 36px;

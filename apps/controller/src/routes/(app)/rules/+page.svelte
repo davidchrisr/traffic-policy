@@ -27,6 +27,7 @@
   import InspectorPanel from "#lib/components/InspectorPanel.svelte";
   import StatusLine from "#lib/components/StatusLine.svelte";
   import Time from "#lib/components/Time.svelte";
+  import BuiltInValue from "#lib/components/BuiltInValue.svelte";
   import RuleLabel from "#lib/components/RuleLabel.svelte";
   import * as Dialog from "#lib/components/ui/dialog/index.ts";
 
@@ -88,7 +89,7 @@
     const addresses = tree.entries.filter((entry) => !entry.instanceId);
 
     return [
-      { id: null, name: "Any instance", path: null },
+      { id: null, name: "Any", path: null },
       ...model.instances.map((instance) => ({
         id: instance.id,
         name: instance.name,
@@ -145,6 +146,7 @@
                 ? `No effect, takes effect ${formatInstantInSentence(found.until, currentTime())}`
                 : "No effect",
               reason: `${found.rule.action === "allow" ? "Allow" : "Block"} ${describeRule(found.rule, model.instances)} matches the same traffic and wins.`,
+              winner: found.rule,
             },
           ],
         ];
@@ -155,6 +157,8 @@
   const packetCount = new Intl.NumberFormat();
 
   const focused = $derived(model.rules.find((rule) => rule.id === selected));
+
+  const focusedOverride = $derived(focused && overrides.get(focused.id));
 
   let refreshing = $state(false);
 
@@ -347,8 +351,9 @@
       </p>{/if}
     {#each groups as group (group.id)}<section class="mb-5">
         <h2 class="section-title mb-2">
-          <span title={group.path ?? undefined}>{group.name}</span
-          >{#if group.path}<span class="sr-only"
+          {#if group.id === null}<BuiltInValue kind="any" />{:else}<span
+              title={group.path ?? undefined}>{group.name}</span
+            >{/if}{#if group.path}<span class="sr-only"
               >{` (${group.path.replaceAll("\n", "; ")})`}</span
             >{/if}<span
             class="muted ml-2 text-xs font-normal"
@@ -412,7 +417,9 @@
   </section>
   <InspectorPanel label="Rule inspector" bind:open={inspectorOpen}>
     {#if focused}<h2 class="section-title mb-4">Selected rule</h2>
-      <p class="break-words">{focused.description}</p>
+      <p class="break-words">
+        <RuleLabel rule={focused} instances={model.instances} />
+      </p>
       <dl class="mt-4 space-y-3">
         <div>
           <dt class="muted text-xs">Action</dt>
@@ -429,11 +436,15 @@
         </div>
         <div>
           <dt class="muted text-xs">State</dt>
-          {#if focused.state === "active" && overrides.has(focused.id)}<dd>
-              {overrides.get(focused.id)?.state}
+          {#if focused.state === "active" && focusedOverride}<dd>
+              {focusedOverride.state}
             </dd>
             <dd class="muted mt-1 text-xs">
-              {overrides.get(focused.id)?.reason}
+              {focusedOverride.winner.action === "allow" ? "Allow" : "Block"}
+              <RuleLabel
+                rule={focusedOverride.winner}
+                instances={model.instances}
+              /> matches the same traffic and wins.
             </dd>{:else}<dd class="capitalize">{focused.state}</dd>{/if}
         </div>
         {#if focused.blocked}<div>

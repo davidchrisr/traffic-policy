@@ -24,8 +24,10 @@ import {
   describeRule,
   isSettingsCatchAll,
   overriddenBy,
+  peerLabel,
   ruleMatches,
   ruleScopeLabel,
+  ruleServiceLabel,
   ruleState,
   scopeTree,
   serviceLabel,
@@ -627,17 +629,23 @@ describe("policy semantics", () => {
     const broad = rule({ protocol: 6, ports: [{ start: 1, end: 65535 }] });
     expect(compareRules(narrow, broad)).toBeLessThan(0);
   });
-  it("labels a port without a protocol as TCP or UDP and any traffic as any", () => {
-    expect(serviceLabel(null, null)).toBe("any");
-    expect(serviceLabel(null, 18081)).toBe("TCP/UDP:18081");
+  it("labels a port without a protocol as TCP or UDP and omits an unrestricted service", () => {
+    expect(serviceLabel(null, null)).toBeNull();
+    expect(serviceLabel(null, 18081)).toBe("TCP/UDP 18081");
     expect(serviceLabel(6, null)).toBe("TCP");
     expect(
       serviceRangesLabel(6, [
         { start: 321, end: 321 },
         { start: 8000, end: 8100 },
       ]),
-    ).toBe("TCP:321, 8000–8100");
+    ).toBe("TCP 321, 8000–8100");
     expect(serviceLabel(47, null)).toBe("Protocol 47");
+    expect(peerLabel({ kind: "any" })).toBe("Any");
+    expect(peerLabel({ kind: "gateway" })).toBe("Gateway");
+    expect(peerLabel({ kind: "domain", value: "example.com" })).toBe(
+      "example.com",
+    );
+    expect(ruleServiceLabel(rule())).toBeNull();
     expect(
       ruleScopeLabel(
         rule({
@@ -645,13 +653,29 @@ describe("policy semantics", () => {
           ports: [{ start: 18081, end: 18081 }],
         }),
       ),
-    ).toBe("10.22.242.20 · TCP/UDP:18081");
+    ).toBe("10.22.242.20 · TCP/UDP 18081");
     expect(ruleScopeLabel(rule({ protocol: 1, icmpType: 8 }))).toBe(
-      "Any peer · ICMP type 8",
+      "Any · ICMP type 8",
     );
+    expect(
+      ruleScopeLabel(
+        rule({
+          direction: "outgoing",
+          peer: { kind: "hostname", value: "a.example" },
+        }),
+      ),
+    ).toBe("a.example");
     expect(describeRule(rule({ direction: "outgoing" }))).toBe(
-      "Any instance · Outgoing · Any peer · any",
+      "Catch-all · Outgoing",
     );
+    expect(
+      describeRule(
+        rule({
+          direction: "outgoing",
+          peer: { kind: "domain", value: "example.com" },
+        }),
+      ),
+    ).toBe("Any · Outgoing · example.com");
   });
   it("decides observed traffic, reports outranking DNS rules, and lists equally specific rules", () => {
     const target = clientContext;
@@ -735,7 +759,7 @@ describe("policy semantics", () => {
       port: 445,
     });
 
-    // A private answer is refused without permitted destination networks.
+    // A private answer is refused by a rule not limited to networks.
     expect(
       decideTraffic([catchAll, named], target, traffic("192.168.1.5"), [], now),
     ).toEqual({ winner: catchAll, dns: [], equal: [], refused: [] });

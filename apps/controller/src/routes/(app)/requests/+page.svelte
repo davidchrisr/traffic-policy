@@ -21,6 +21,7 @@
   import StatusLine from "#lib/components/StatusLine.svelte";
   import Time from "#lib/components/Time.svelte";
   import DirectionIcon from "#lib/components/DirectionIcon.svelte";
+  import DottedName from "#lib/components/DottedName.svelte";
   import RuleDecision from "#lib/components/RuleDecision.svelte";
   import { policyTree, ruleName, type DecisionState } from "#lib/rule-state.ts";
   import {
@@ -48,6 +49,9 @@
 
   // Kept in a mustache so formatting cannot move or drop the spaces around it.
   const separator = " · ";
+
+  // Follows the root question "."; a mustache keeps its leading space.
+  const rootLabel = " DNS root";
 
   // A stalled suggestions read would otherwise hold every decision on the page.
   const SUGGESTIONS_TIMEOUT_MS = 10_000;
@@ -435,7 +439,7 @@
   ) {
     const why =
       reason === "outside"
-        ? "outside the rule's permitted destination networks"
+        ? "outside the rule's networks"
         : "which is not a public address";
 
     const note = rule.dnsDestinations
@@ -549,7 +553,7 @@
     }
   }
 
-  // Opens the rule with the request's exact address added to its permitted destination networks.
+  // Opens the rule with the request's exact address added to its networks.
   function allowThrough(rule: Rule, address: string) {
     // A pending decision would replace this edit when its names arrive.
     if (deciding) return;
@@ -698,8 +702,13 @@
                 selected = request.id;
                 inspectorOpen = true;
               }}
-              ><span class="block break-all">{destination}</span><span
-                class="rule-label muted text-xs"
+              ><span class="block wrap-anywhere"
+                ><DottedName
+                  value={destination}
+                />{#if request.kind === "dns" && request.question === "."}<span
+                    class="muted font-sans text-xs">{rootLabel}</span
+                  >{/if}</span
+              ><span class="rule-label muted text-xs"
                 ><DirectionIcon
                   direction={request.kind === "dns"
                     ? "outgoing"
@@ -754,8 +763,9 @@
         <span class="muted text-xs">Names it looked up</span>
         {#if focused.names.length}<ul class="space-y-1">
             {#each focused.names as name (name.name)}<li>
-                <span class="break-all">{name.name}</span><span
-                  class="muted text-xs"
+                <span class="wrap-anywhere"
+                  ><DottedName value={name.name} /></span
+                ><span class="muted text-xs"
                   >{separator}<Time value={name.at} /></span
                 >
               </li>{/each}
@@ -791,7 +801,11 @@
         {focused.kind === "dns" ? "Denied DNS lookup" : "Blocked attempt"}
       </h2>
       <p class="break-all font-mono">
-        {focused.kind === "dns" ? focused.question : focused.peerIp}
+        {focused.kind === "dns"
+          ? focused.question
+          : focused.peerIp}{#if focused.kind === "dns" && focused.question === "."}<span
+            class="muted font-sans text-sm">{rootLabel}</span
+          >{/if}
       </p>
       {#if focused.kind === "dns"}
         <div class="mt-4">
@@ -799,7 +813,7 @@
           <p>{focused.queryType}</p>
         </div>
         {#if focused.question === "."}<p class="field-help mt-2">
-            Allowing this needs an Any peer rule.
+            Only a rule with Any as its peer can allow this.
           </p>{/if}
       {:else}
         <div class="mt-4">
@@ -810,8 +824,9 @@
               Loading…
             </p>{:else if names.length}<ul class="space-y-1">
               {#each names as name (name.hostname)}<li>
-                  <span class="block break-all">{name.hostname}</span><span
-                    class="muted text-xs"
+                  <span class="block wrap-anywhere"
+                    ><DottedName value={name.hostname} /></span
+                  ><span class="muted text-xs"
                     >{sourceLabels[name.source]}{separator}<Time
                       value={name.lastSeenAt}
                     /></span

@@ -37,13 +37,13 @@
     class="rule-decision"
     data-state={state}
     data-locked="true"
-    title={`${description}. ${locked}`}
+    title={locked}
     ><span class="rule-decision-icon"
       ><Ban size={16} class={blockColor} aria-hidden="true" /></span
     ><span class="rule-decision-icon"
       ><Check size={16} class={allowColor} aria-hidden="true" /></span
     ><span class="sr-only">{`${description}. ${locked}`}</span></span
-  >{:else}<span class="rule-decision" data-state={state} title={description}>
+  >{:else}<span class="rule-decision" data-state={state}>
     <Button
       variant="ghost"
       size="icon-pair"

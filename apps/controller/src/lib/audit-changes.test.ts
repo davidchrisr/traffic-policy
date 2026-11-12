@@ -4,7 +4,7 @@ import {
   type Policy,
   type Rule,
 } from "@traffic-policy/contracts";
-import { describeChanges } from "./audit-changes.ts";
+import { anyValue, describeChanges, gatewayValue } from "./audit-changes.ts";
 import { policyChanges } from "./server/policy-changes.ts";
 
 const instanceId = "11111111-1111-4111-8111-111111111111";
@@ -116,12 +116,12 @@ describe("policy change details", () => {
     ]);
 
     expect(update!.title).toBe(
-      "Changed rule: Client · Outgoing · 10.22.242.99 · UDP:18100",
+      "Changed rule: Client · Outgoing · 10.22.242.99 · UDP 18100",
     );
     expect(
       update!.lines.map((line) => [line.label, line.before, line.after]),
     ).toEqual([
-      ["Service", "UDP:18099", "UDP:18100"],
+      ["Service", "UDP 18099", "UDP 18100"],
       [
         "Expires",
         expect.stringContaining("2026"),
@@ -148,7 +148,7 @@ describe("policy change details", () => {
     );
 
     expect(deleted!.title).toBe(
-      "Deleted Allow rule: Client · Outgoing · 10.22.242.99 · UDP:18099",
+      "Deleted Allow rule: Client · Outgoing · 10.22.242.99 · UDP 18099",
     );
     expect(deleted!.lines).toEqual([
       {
@@ -187,9 +187,10 @@ describe("policy change details", () => {
     expect(scope(address, rule)).toEqual([
       ["Instance", "10.22.241.10", "Client"],
     ]);
-    expect(scope(rule, global)).toEqual([
-      ["Instance", "Client", "Any instance"],
-    ]);
+    expect(scope(rule, global)).toEqual([["Instance", "Client", anyValue]]);
+    expect(
+      scope(rule, { ...rule, peer: { kind: "gateway" } as const }),
+    ).toEqual([["Peer", "10.22.242.99", gatewayValue]]);
   });
 
   it("records nothing when only bookkeeping changed", () => {

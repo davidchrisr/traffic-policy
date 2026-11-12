@@ -19,10 +19,16 @@
   import { latestStatus, liveStatus } from "#lib/live-status.ts";
   import { RefreshRunner } from "#lib/refresh-runner.ts";
   import { api } from "#lib/client.ts";
+  import BuiltInValue from "#lib/components/BuiltInValue.svelte";
   import RuleLabel from "#lib/components/RuleLabel.svelte";
   import Time from "#lib/components/Time.svelte";
   import StatusLine from "#lib/components/StatusLine.svelte";
-  import { describeChanges } from "#lib/audit-changes.ts";
+  import {
+    anyValue,
+    gatewayValue,
+    describeChanges,
+    type ChangeValue,
+  } from "#lib/audit-changes.ts";
 
   let { data }: PageProps = $props();
 
@@ -91,6 +97,14 @@
 
   const status = $derived(latestStatus(live.current, model.status));
 </script>
+
+{#snippet changeValue(
+  value: ChangeValue | null,
+)}{#if value === anyValue}<BuiltInValue
+      kind="any"
+    />{:else if value === gatewayValue}<BuiltInValue
+      kind="gateway"
+    />{:else}{value}{/if}{/snippet}
 
 <svelte:head><title>History · Traffic Policy</title></svelte:head>
 <header class="page-header">
@@ -169,9 +183,13 @@
                           {line.label}
                         </dt>
                         <dd>
-                          {line.before !== null && line.after !== null
-                            ? `${line.before} → ${line.after}`
-                            : (line.after ?? line.before)}
+                          {#if line.before !== null && line.after !== null}{@render changeValue(
+                              line.before,
+                            )} → {@render changeValue(
+                              line.after,
+                            )}{:else}{@render changeValue(
+                              line.after ?? line.before,
+                            )}{/if}
                         </dd>{/each}
                     </dl>{/if}
                 </div>{/each}

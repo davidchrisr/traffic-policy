@@ -84,7 +84,7 @@ export interface BuiltIn {
   name: string;
   condition: string | null;
   direction: Service["direction"];
-  service: string;
+  service: string | null;
 }
 
 // A fixed service of the gateway: the addresses it is accepted for, null for any, and for DHCP the
@@ -317,7 +317,7 @@ export function decideService(
 export function refusalNotes(decision: ServiceDecision): string[] {
   return decision.refused.map(
     ({ rule, reason }) =>
-      `${decision.name} resolves to ${decision.peerIp}, ${reason === "outside" ? "outside the rule's permitted destination networks" : "which is not a public address"}, so ${ruleName(rule)} does not apply. Add the address to the rule's permitted destination networks for it to apply.`,
+      `${decision.name} resolves to ${decision.peerIp}, ${reason === "outside" ? "outside the rule's networks" : "which is not a public address"}, so ${ruleName(rule)} does not apply. Add the address to the rule's networks for it to apply.`,
   );
 }
 
@@ -375,9 +375,12 @@ export function stateDescription(
 const builtInText = ({ name, condition }: BuiltIn) =>
   `Allowed ${condition ? `${condition} ` : ""}by the built-in ${name} rule`;
 
+// The label is the plain text; the name and details frame the boxed Gateway on screen.
 export interface InspectorBuiltIn {
   direction: BuiltIn["direction"];
   label: string;
+  name: string;
+  details: string[];
 }
 
 // The gateway accepts that admit the selection's services before any rule, once each, labelled
@@ -390,9 +393,15 @@ export function inspectorBuiltIns(
   for (const decision of decisions) {
     if (!decision?.builtIn) continue;
     const { name, condition, direction, service } = decision.builtIn;
-    const label = `${capitalize(name)} · Gateway · ${service}${condition ? ` · ${condition}` : ""}`;
+    const details = [service, condition].filter((detail) => detail !== null);
+    const label = [capitalize(name), "Gateway", ...details].join(" · ");
 
-    rows.set(`${direction}|${label}`, { direction, label });
+    rows.set(`${direction}|${label}`, {
+      direction,
+      label,
+      name: capitalize(name),
+      details,
+    });
   }
 
   return [...rows.values()];
@@ -500,7 +509,7 @@ export function inspectorRules(
       rows[rule.id] ??= {
         rule,
         dns: null,
-        note: `No effect for ${decision!.peerIp}: ${reason === "outside" ? "outside its permitted destination networks" : "not a public address"}. Add the address to its permitted destination networks for it to apply.`,
+        note: `No effect for ${decision!.peerIp}: ${reason === "outside" ? "outside its networks" : "not a public address"}. Add the address to its networks for it to apply.`,
       };
 
   return Object.values(rows).sort((left, right) =>

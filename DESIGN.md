@@ -213,21 +213,22 @@ value, followed by revisions and the recorded identifier.
 
 Rules and Requests use compact instance groups with a contextual inspector.
 Rules filters place High priority before Temporary and keep Disabled and Expired
-separate. Global rules appear under Any instance; address rules are grouped by
-range, named "192.0.2.70 in example-network". Rule rows have no inline enable
-toggle; the inspector contains labeled controls. Requests uses Needs review,
-Applying, and Failed filters with muted counts. A DNS row places the question on
-its first line and its latest query type, such as `A` or `HTTPS`, below it; the
-inspector labels it Query type. A connection row places the IP above its
-direction and service. Keep both row types aligned with the same selection fill
-and Allow/Block pair. Long names wrap without moving the actions outside the
-row. The inspector lists Recent clients with their time and, for an address that
-is not exactly the instance's, an outline Allow for this address button. Needs
-review starts with an Unregistered hosts group: each row shows the address in
-monospace, its sampled drop count and newest looked-up name, and an outline
-Register button in place of the Allow/Block pair. Register opens a dialog
-choosing New instance or Add to an instance, with name and address fields, and
-states how many rules for exactly that address move to the instance.
+separate. Global rules appear under Any; address rules are grouped by range,
+named "192.0.2.70 in example-network". Rule rows have no inline enable toggle;
+the inspector contains labeled controls. Requests uses Needs review, Applying,
+and Failed filters with muted counts. A DNS row places the question on its first
+line, with the root question labeled DNS root, and its latest query type, such
+as `A` or `HTTPS`, below it; the inspector labels it Query type. A connection
+row places the IP above its direction and service. Keep both row types aligned
+with the same selection fill and Allow/Block pair. Long names wrap without
+moving the actions outside the row. The inspector lists Recent clients with
+their time and, for an address that is not exactly the instance's, an outline
+Allow for this address button. Needs review starts with an Unregistered hosts
+group: each row shows the address in monospace, its sampled drop count and
+newest looked-up name, and an outline Register button in place of the
+Allow/Block pair. Register opens a dialog choosing New instance or Add to an
+instance, with name and address fields, and states how many rules for exactly
+that address move to the instance.
 
 ## Charts, data and states
 
@@ -272,8 +273,8 @@ Monitor rows and inspector rule rows show the pair as Ban then Check, 24px
 square buttons on one grey fill, with the current decision in the icon colors:
 Check green for allowed, Ban red for blocked, Ban amber while waiting for
 review, and both grey when services differ or the outcome depends on DNS. A pair
-without measured traffic is dimmed. The tooltip and accessible name state the
-decision in words.
+without measured traffic is dimmed. Its accessible name states the decision in
+words; it has no hover tooltip.
 
 The Settings-owned catch-all recedes like an inactive rule and offers no Edit,
 Disable, Delete, or decision buttons: the Rules list and inspector point to
@@ -286,16 +287,19 @@ with a warning icon at the top of the form, so it stays in view while Action and
 Priority change. Rules another rule overrides recede like inactive rules and
 show "No effect" as their state line.
 
-Rule text is `peer · service`, for example `198.51.100.20 · TCP/UDP:18081`,
-`Gateway · TCP:22`, or `Any peer · any`. Icons replace words for direction (→
-outgoing, ← incoming, ⇄ both), Temporary (clock), High priority (double
-chevron), and DNS dependence (globe); each has a tooltip and screen-reader text.
-Times read "just now", "N min ago", or "in N min" within an hour, "N hr ago" or
-"in N hr" within a day, then "Yesterday", "Tomorrow", "N days ago", or "in N
-days" through six calendar days. From seven days they show the month and day
-with the time this year, and the month, day, and year otherwise. The full time
-is in a tooltip. Chart axes and chart tooltips keep their own scale formats.
-Pending application uses the waiting state rather than a success icon.
+Rule text is `peer · service`, for example `198.51.100.20 · TCP/UDP 18081` or
+`example.com · TCP 443`; an unrestricted service is omitted. Hostnames and
+addresses wrap after a dot. Icons replace words for direction (→ outgoing, ←
+incoming, ⇄ both), Temporary (clock), High priority (double chevron), and DNS
+dependence (globe); each has a tooltip and screen-reader text. The built-in
+values Any and Gateway appear in a grey box in rule text, History values, and
+Monitor rows, so they stand apart from names people enter. Times read "just
+now", "N min ago", or "in N min" within an hour, "N hr ago" or "in N hr" within
+a day, then "Yesterday", "Tomorrow", "N days ago", or "in N days" through six
+calendar days. From seven days they show the month and day with the time this
+year, and the month, day, and year otherwise. The full time is in a tooltip.
+Chart axes and chart tooltips keep their own scale formats. Pending application
+uses the waiting state rather than a success icon.
 
 ## Catalog and verification
 

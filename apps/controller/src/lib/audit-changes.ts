@@ -12,7 +12,7 @@ import type { AuditChange } from "@traffic-policy/contracts/dashboard";
 import {
   describeRule,
   directionLabels,
-  serviceRangesLabel,
+  ruleServiceLabel,
   subjectLabel,
 } from "@traffic-policy/core";
 import { formatByteSize } from "./byte-size.ts";
@@ -22,11 +22,18 @@ type Fields = NonNullable<AuditChange["after"]>;
 
 type Value = Fields[string];
 
+// An unrestricted instance, peer, or service, and the gateway peer, which History shows boxed.
+export const anyValue = Symbol("Any");
+
+export const gatewayValue = Symbol("Gateway");
+
+export type ChangeValue = string | typeof anyValue | typeof gatewayValue;
+
 export interface ChangeLine {
   label: string;
   // Null on the side where the object did not exist.
-  before: string | null;
-  after: string | null;
+  before: ChangeValue | null;
+  after: ChangeValue | null;
 }
 
 export interface ChangeView {
@@ -36,7 +43,7 @@ export interface ChangeView {
 
 interface Field {
   label: string;
-  format: (value: Value | undefined, instances: Instance[]) => string;
+  format: (value: Value | undefined, instances: Instance[]) => ChangeValue;
 }
 
 const optionalText = z.string().nullable();
@@ -52,6 +59,8 @@ const ruleFields = {
     label: "Instance",
     format: (value, instances) => {
       const subject = subjectSchema.parse(value);
+
+      if (subject.kind === "global") return anyValue;
 
       return subject.kind === "instance" &&
         !instances.some((instance) => instance.id === subject.instanceId)
@@ -70,9 +79,9 @@ const ruleFields = {
       const peer = peerSchema.parse(value);
 
       return peer.kind === "any"
-        ? "Any peer"
+        ? anyValue
         : peer.kind === "gateway"
-          ? "Gateway"
+          ? gatewayValue
           : peer.value;
     },
   },
@@ -106,11 +115,15 @@ const ruleFields = {
 const port = z.number().int().nullable();
 
 // Protocol, ports, and ICMP type and code read as one service.
-function service(fields: Fields): string {
-  const icmpType = port.parse(fields.icmpType);
-  const icmpCode = port.parse(fields.icmpCode);
-
-  return `${serviceRangesLabel(port.parse(fields.protocol), portsSchema.nullable().parse(fields.ports))}${icmpType === null ? "" : ` type ${icmpType}`}${icmpCode === null ? "" : ` code ${icmpCode}`}`;
+function service(fields: Fields): ChangeValue {
+  return (
+    ruleServiceLabel({
+      protocol: port.parse(fields.protocol),
+      ports: portsSchema.nullable().parse(fields.ports),
+      icmpType: port.parse(fields.icmpType),
+      icmpCode: port.parse(fields.icmpCode),
+    }) ?? anyValue
+  );
 }
 
 const instanceFields = {

@@ -324,11 +324,11 @@ can be the configured upstream resolver. Unregistered clients remain refused.
 In `require-allow` mode, a lookup is allowed when at least one outgoing service
 remains allowed for the question under current rule precedence, scope, and time
 conditions. A hostname or domain Allow with no protocol or ports allows lookup
-and leaves services unrestricted except where a winning rule blocks them. A
-TCP:443 Allow also permits lookup, while packet enforcement retains its service
-restriction. A TCP:22 Block cannot suppress DNS needed by an effective TCP:443
+and leaves services unrestricted except where a winning rule blocks them. A TCP
+443 Allow also permits lookup, while packet enforcement retains its service
+restriction. A TCP 22 Block cannot suppress DNS needed by an effective TCP 443
 Allow. Higher-ranked Blocks can collectively cover every allowed service and
-deny lookup. Any-destination Allows, including TCP:80/443, permit DNS for any
+deny lookup. Any-destination Allows, including TCP 80/443, permit DNS for any
 name. Incoming rules and IP/CIDR selectors cannot authorize a question before
 its address is known. The original question controls name matching across
 CNAMEs.

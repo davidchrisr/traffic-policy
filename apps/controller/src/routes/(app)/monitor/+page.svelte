@@ -45,6 +45,8 @@
   import RuleDecision from "#lib/components/RuleDecision.svelte";
   import RuleLabel from "#lib/components/RuleLabel.svelte";
   import DirectionIcon from "#lib/components/DirectionIcon.svelte";
+  import BuiltInValue from "#lib/components/BuiltInValue.svelte";
+  import DottedName from "#lib/components/DottedName.svelte";
   import { MonitorView } from "#lib/monitor-view.ts";
   import {
     monitorSnapshotSchema,
@@ -446,8 +448,10 @@
             key: peer.key,
           })}
         ><span class="block"
-          >{#if gatewayAddresses.has(peer.peerIp)}Gateway <span
-              class="muted text-xs">{peer.peerIp}</span
+          >{#if gatewayAddresses.has(peer.peerIp)}<BuiltInValue
+              kind="gateway"
+            />
+            <span class="muted text-xs">{peer.peerIp}</span
             >{:else}{peer.peerIp}{/if}</span
         >{#if peer.names?.length}<span
             class="muted text-xs"
@@ -689,7 +693,7 @@
                       />{:else}<ChevronRight size={16} />{/if}</Button
                   >
                   <button
-                    class="monitor-name break-all"
+                    class="monitor-name"
                     aria-label={`Inspect domain ${domain.name}`}
                     aria-pressed={nameScope?.key === domainKey}
                     onclick={() =>
@@ -699,7 +703,8 @@
                         name: domain.name,
                         key: domainKey,
                       })}
-                    >{domain.name}<span class="block muted text-xs"
+                    ><DottedName value={domain.name} /><span
+                      class="block muted text-xs"
                       >{domain.hosts.length} observed {domain.hosts.length === 1
                         ? "hostname"
                         : "hostnames"}</span
@@ -761,7 +766,7 @@
                             />{:else}<ChevronRight size={16} />{/if}</Button
                         >
                         <button
-                          class="monitor-name break-all"
+                          class="monitor-name"
                           aria-label={`Inspect hostname ${host.name}`}
                           aria-pressed={nameScope?.key === hostKey}
                           onclick={() =>
@@ -770,7 +775,7 @@
                               instanceId: group.id,
                               name: host.name,
                               key: hostKey,
-                            })}>{host.name}</button
+                            })}><DottedName value={host.name} /></button
                         >
                         <div
                           class="monitor-measure"
@@ -993,7 +998,9 @@
                 : "Instance"}
       </h2>
       <p class="font-semibold break-words">{selectedName}</p>
-      {#if nameScope}<p class="mt-2 break-all">{nameScope.name}</p>{/if}
+      {#if nameScope}<p class="mt-2 wrap-anywhere">
+          <DottedName value={nameScope.name} />
+        </p>{/if}
       {#if serviceScope || peerAddress}<p
           class="mt-2 break-all font-mono text-sm"
         >
@@ -1043,7 +1050,10 @@
             />
             <span class="rule-label min-w-0"
               ><DirectionIcon direction={row.direction} /><span
-                class="min-w-0 break-words">{row.label}</span
+                class="min-w-0 break-words"
+                >{row.name}{separator}<BuiltInValue
+                  kind="gateway"
+                />{#each row.details as detail (detail)}{separator}{detail}{/each}</span
               ></span
             >
           </div>
@@ -1062,7 +1072,7 @@
               onallow={() => editRule(row.rule, "allow")}
               onblock={() => editRule(row.rule, "block")}
               locked={isSettingsCatchAll(row.rule)
-                ? "Change the catch-all in Settings"
+                ? "Applies when no rule matches. Set in Settings."
                 : null}
             />
             <span class="min-w-0" title={row.note ?? undefined}
@@ -1096,16 +1106,18 @@
           {#each blocked?.rules ?? [] as entry (entry.key)}
             {@const rule = blockedRule(entry.ruleId)}
             <div class="list-row inspector-event">
-              <span class="rule-label min-w-0 flex-1"
-                >{#if entry.direction}<DirectionIcon
+              {#if rule}<span class="min-w-0 flex-1"
+                  ><RuleLabel
+                    {rule}
                     direction={entry.direction}
-                  />{/if}<span class="min-w-0 break-words"
-                  >{rule ? ruleTitle(rule) : "Deleted rule"}{rule &&
-                  ruleState(rule) === "expired"
-                    ? " · expired"
-                    : ""}</span
-                ></span
-              >
+                  />{#if ruleState(rule) === "expired"}<span class="ml-1.5"
+                      >· expired</span
+                    >{/if}</span
+                >{:else}<span class="rule-label min-w-0 flex-1"
+                  >{#if entry.direction}<DirectionIcon
+                      direction={entry.direction}
+                    />{/if}<span class="min-w-0">Deleted rule</span></span
+                >{/if}
               {#if entry.packets !== null}<span
                   class="numeric shrink-0 text-xs"
                   title={`Packets this rule blocked for ${selectedName ?? "this instance"} in this period, all destinations. Counting starts at the minute containing the period start, or the hour when the period starts more than a day ago.`}
@@ -1167,7 +1179,9 @@
         <h3 class="section-title mt-6 mb-2">Observed names</h3>
         {#each inspectorNames as name (`${name.instanceId}|${name.peerIp}|${name.hostname}`)}
           <div class="list-row inspector-event">
-            <span class="min-w-0 flex-1 break-all">{name.hostname}</span>
+            <span class="min-w-0 flex-1 wrap-anywhere"
+              ><DottedName value={name.hostname} /></span
+            >
             <span class="muted shrink-0 text-xs" title={name.peerIp}
               >{name.source.toUpperCase()}{name.protocol === null
                 ? ""
@@ -1181,13 +1195,14 @@
           </p>{/each}
         <h3 class="section-title mt-6 mb-2">Events</h3>
         {#each eventGroups as group (`${group.type}|${group.direction}|${group.protocol}|${group.port}`)}
+          {@const service = serviceLabel(group.protocol, group.port)}
           <div class="list-row inspector-event">
             <span class="rule-label min-w-0 flex-1"
               >{#if group.direction}<DirectionIcon
                   direction={group.direction}
-                />{/if}<span class="font-mono text-sm"
-                >{serviceLabel(group.protocol, group.port)}</span
-              ><span>{eventLabels[group.type]}</span></span
+                />{/if}{#if service}<span class="font-mono text-sm"
+                  >{service}</span
+                >{/if}<span>{eventLabels[group.type]}</span></span
             >
             <span class="muted shrink-0 text-xs"
               >{group.count} · <Time value={group.lastAt} /></span
