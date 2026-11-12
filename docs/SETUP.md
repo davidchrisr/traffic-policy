@@ -148,11 +148,11 @@ them.
 ## Initialize Admin
 
 Copy `examples/settings.json` to `/etc/traffic-policy/settings.json` and adjust
-the storage budgets. Hostname and domain rules without permitted destination
-networks reach only public unicast addresses; private, loopback and other
-reserved ranges are always excluded. List in `localNetworks` any additional
-ranges, such as public addresses used inside your network, that those rules must
-not reach. The template leaves the list empty.
+the storage budgets. Hostname and domain rules not limited to networks reach
+only public unicast addresses; private, loopback and other reserved ranges are
+always excluded. List in `localNetworks` any additional ranges, such as public
+addresses used inside your network, that those rules must not reach. The
+template leaves the list empty.
 
 Create a protected `/etc/traffic-policy/admin-password` file containing the
 chosen password, accessible only to root and the `traffic-policy` group. There

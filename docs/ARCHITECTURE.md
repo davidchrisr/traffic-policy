@@ -358,12 +358,12 @@ and local confirmation still apply. Existing cached addresses remain subject to
 packet rules.
 
 Hostname and domain rules admit public unicast addresses by default, excluding
-configured local networks. Listing permitted destination networks replaces that
-default. Learning an IP does not authorize every service or prove which hostname
-a later connection uses; shared IPs cannot enforce hostname isolation. Fresh
-successful resolutions renew returned addresses. Old answers retain their
-deadlines when answers change; traffic and restarts cannot renew them. Rule
-disablement, deletion, and hard expiry override DNS grace.
+configured local networks. Turning on Limit to networks and listing networks
+replaces that default. Learning an IP does not authorize every service or prove
+which hostname a later connection uses; shared IPs cannot enforce hostname
+isolation. Fresh successful resolutions renew returned addresses. Old answers
+retain their deadlines when answers change; traffic and restarts cannot renew
+them. Rule disablement, deletion, and hard expiry override DNS grace.
 
 Gateway and enforcement service RPCs use persistent Unix connections with
 newline-delimited JSON frames and request-ID correlation. DNS and control use
@@ -983,30 +983,33 @@ incoming and both-direction requests keep the IP, since hostname rules apply
 only to outgoing traffic. One name is preselected; several, or a list the read
 limits cut short, require a choice, with the IP available explicitly. Without a
 matching name the IP is prefilled, as it is for an address a hostname rule
-without permitted destination networks cannot admit. The editor warns when a
-hostname or domain draft would not admit the request's address and offers to add
-it to the permitted destination networks; it does not add it by itself. A
-hostname or domain draft whose address subject has no scope of its own notes
-that it takes effect after those addresses look the name up again: saving gives
-them a new scope path, and the answers they already hold stay with the previous
-one. Lookups count only from the Request's own client addresses, so a dual-stack
-host that resolves over one family and connects over the other gets the IP
-draft. Only confirmed resolver-gate answers index their client, and each
-client's read covers only those answers. Historical inspector names are not
-suggestions. The suggestions read has a 10-second deadline, and a failure is
-shown without opening a draft. DNS requests in `require-allow` mode prefill the
-exact hostname, instance, and outgoing direction with no service conditions. The
-root DNS question requires an Any peer selector, shown in the editor. Scope,
-action, priority, activation, and lifetime remain editable. Saving never raises
-priority automatically. Available lifetimes are Permanent, 15 minutes, 1 hour, 8
-hours, 24 hours, and Until a deadline.
+without listed networks cannot admit. The editor warns when a hostname or domain
+draft would not admit the request's address and offers to add it to the rule's
+networks; it does not add it by itself. A hostname or domain draft whose address
+subject has no scope of its own notes that it takes effect after those addresses
+look the name up again: saving gives them a new scope path, and the answers they
+already hold stay with the previous one. Lookups count only from the Request's
+own client addresses, so a dual-stack host that resolves over one family and
+connects over the other gets the IP draft. Only confirmed resolver-gate answers
+index their client, and each client's read covers only those answers. Historical
+inspector names are not suggestions. The suggestions read has a 10-second
+deadline, and a failure is shown without opening a draft. DNS requests in
+`require-allow` mode prefill the exact hostname, instance, and outgoing
+direction with no service conditions. The root DNS question requires an Any peer
+selector, shown in the editor. Scope, action, priority, and lifetime remain
+editable. Saving never raises priority automatically. Available lifetimes are
+Permanent, 15 minutes, 1 hour, 8 hours, 24 hours, and Custom; presets count from
+saving, and Custom sets an optional start and end. An empty start, or one that
+has passed, is saved as no start, so the rule applies at once. A new or changed
+end must be in the future; an expired rule keeps its end when edited and stays
+expired.
 
 Connection inspectors load observed DNS, TLS, and HTTP names for the actual
 address. A shared address does not identify a blocked connection's hostname.
 When a name Allow would win but refuses the address, Allow through opens that
-rule with the exact address added to its permitted networks, unsaved for review.
-Listing a network replaces the public-address default. DNS inspectors show the
-actual requested name directly.
+rule with the exact address added to its networks, unsaved for review. Listing a
+network replaces the public-address default. DNS inspectors show the actual
+requested name directly.
 
 Saving a targeted decision moves matching Requests to Applying. DNS requests use
 the shared DNS evaluator; connection requests consider their observed names and

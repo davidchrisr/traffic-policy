@@ -284,22 +284,32 @@ actions until the next action or selection, with the server's field messages.
 
 The override warning in the rule editor is a bordered note in the pending color
 with a warning icon at the top of the form, so it stays in view while Action and
-Priority change. Rules another rule overrides recede like inactive rules and
-show "No effect" as their state line.
+High priority change. Rules another rule overrides recede like inactive rules
+and show "No effect" as their state line.
 
 Rule text is `peer · service`, for example `198.51.100.20 · TCP/UDP 18081` or
 `example.com · TCP 443`; an unrestricted service is omitted. Hostnames and
 addresses wrap after a dot. Icons replace words for direction (→ outgoing, ←
 incoming, ⇄ both), Temporary (clock), High priority (double chevron), and DNS
 dependence (globe); each has a tooltip and screen-reader text. The built-in
-values Any and Gateway appear in a grey box in rule text, History values, and
-Monitor rows, so they stand apart from names people enter. Times read "just
-now", "N min ago", or "in N min" within an hour, "N hr ago" or "in N hr" within
-a day, then "Yesterday", "Tomorrow", "N days ago", or "in N days" through six
-calendar days. From seven days they show the month and day with the time this
-year, and the month, day, and year otherwise. The full time is in a tooltip.
-Chart axes and chart tooltips keep their own scale formats. Pending application
-uses the waiting state rather than a success icon.
+values Any and Gateway appear in a grey box in rule text, History values,
+Monitor rows, and editor options, so they stand apart from names people enter.
+Date fields show the chosen day and time and open a calendar with times in
+15-minute steps beside it; the editor offers them only under Custom lifetime. A
+filled date field shows a clear button; an empty Starts reads Now and an empty
+Ends reads No end. Picking only a time on an empty field takes the next time it
+comes around. The rule editor keeps High priority and Enabled as switches beside
+its title. Its fields read in the order of a rule: Action and Direction, then
+Instance, Peer, and Service, each with its value beside its dropdown, then
+Lifetime. Hostname and domain rules show a Limit to networks switch under Peer,
+and the network list only while it is on. Scrollable panes use a thin scrollbar
+in `#3a3a3a`. Times read "just now", "N min ago", or "in N min" within an hour,
+"N hr ago" or "in N hr" within a day, then "Yesterday", "Tomorrow", "N days
+ago", or "in N days" through six calendar days. From seven days they show the
+month and day with the time this year, and the month, day, and year otherwise.
+The full time is in a tooltip. Chart axes and chart tooltips keep their own
+scale formats. Pending application uses the waiting state rather than a success
+icon.
 
 ## Catalog and verification
 

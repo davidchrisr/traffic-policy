@@ -23,6 +23,8 @@
   import { Button } from "#lib/components/ui/button/index.ts";
   import { Input } from "#lib/components/ui/input/index.ts";
   import Choice from "#lib/components/Choice.svelte";
+  import DateTimeField from "#lib/components/DateTimeField.svelte";
+  import { nextDay, nextQuarterHour } from "#lib/date-picking.ts";
   import RuleEditor from "#lib/components/RuleEditor.svelte";
   import InspectorPanel from "#lib/components/InspectorPanel.svelte";
   import StatusLine from "#lib/components/StatusLine.svelte";
@@ -45,17 +47,24 @@
     refreshError = $state(""),
     actionError = $state("");
 
-  // Renewal reuses the editor's lifetimes; a deadline is sent as seconds from now.
+  // Renewal reuses the editor's lifetimes; a custom end is sent as seconds from now.
   const renewOptions = [
     { value: "900", label: "15 minutes" },
     { value: "3600", label: "1 hour" },
     { value: "28800", label: "8 hours" },
     { value: "86400", label: "24 hours" },
-    { value: "custom", label: "Until a deadline" },
+    { value: "custom", label: "Custom" },
   ];
 
   let renewFor = $state("3600"),
     renewUntil = $state("");
+
+  // Custom renewal ends a day from the next quarter hour unless an end is already set.
+  function chooseRenewal(value: string) {
+    renewFor = value;
+
+    if (value === "custom") renewUntil ||= nextDay(nextQuarterHour());
+  }
 
   let deleting = $state<Rule | null>(null),
     deleteBusy = $state(false),
@@ -281,7 +290,7 @@
         : Number(renewFor);
 
     if (!(durationSeconds > 0)) {
-      actionError = "Choose a renewal deadline in the future";
+      actionError = "Select an end in the future";
 
       return;
     }
@@ -431,8 +440,8 @@
           </dd>
         </div>
         <div>
-          <dt class="muted text-xs">Priority</dt>
-          <dd>{focused.priority === "high" ? "High" : "Normal"}</dd>
+          <dt class="muted text-xs">High priority</dt>
+          <dd>{focused.priority === "high" ? "Yes" : "No"}</dd>
         </div>
         <div>
           <dt class="muted text-xs">State</dt>
@@ -489,16 +498,17 @@
           >
             <Choice
               label="Renew for"
-              bind:value={renewFor}
+              bind:value={() => renewFor, chooseRenewal}
               options={renewOptions}
-            />{#if renewFor === "custom"}<Input
-                type="datetime-local"
-                step="1"
-                aria-label="Renew until"
-                class="w-auto"
-                bind:value={renewUntil}
-              />{/if}<Button variant="outline" onclick={() => renew(focused)}
-              >Renew</Button
+            />{#if renewFor === "custom"}<div class="w-64">
+                <DateTimeField
+                  id="renew-until"
+                  label="Renew until"
+                  bind:value={renewUntil}
+                />
+              </div>{/if}<Button
+              variant="outline"
+              onclick={() => renew(focused)}>Renew</Button
             >
           </div>{/if}{/if}
       {#if actionError}<p class="field-error mt-4" role="alert">

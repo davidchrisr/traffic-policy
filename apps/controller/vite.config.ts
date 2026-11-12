@@ -32,6 +32,7 @@ export default defineConfig(() => {
         "@traffic-policy/core",
         "clsx",
         "bits-ui",
+        "@internationalized/date",
         "tailwind-variants",
         "tailwind-merge",
         "@lucide/svelte",

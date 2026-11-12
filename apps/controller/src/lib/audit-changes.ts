@@ -91,20 +91,20 @@ const ruleFields = {
       z.enum(["allow", "block"]).parse(value) === "allow" ? "Allow" : "Block",
   },
   priority: {
-    label: "Priority",
+    label: "High priority",
     format: (value) =>
-      z.enum(["normal", "high"]).parse(value) === "high" ? "High" : "Normal",
+      z.enum(["normal", "high"]).parse(value) === "high" ? "Yes" : "No",
   },
   enabled: {
     label: "State",
     format: (value) => (z.boolean().parse(value) ? "Enabled" : "Disabled"),
   },
   notBefore: { label: "Starts", format: deadline("Immediately") },
-  expiresAt: { label: "Expires", format: deadline("Never") },
+  expiresAt: { label: "Ends", format: deadline("No end") },
   dnsDestinations: {
-    label: "DNS destinations",
+    label: "Networks",
     format: (value) =>
-      z.array(z.string()).nullable().parse(value)?.join(", ") ?? "Any",
+      z.array(z.string()).nullable().parse(value)?.join(", ") ?? "Not limited",
   },
   reason: {
     label: "Reason",

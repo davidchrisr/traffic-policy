@@ -24,7 +24,10 @@
   import * as Tabs from "#lib/components/ui/tabs/index.ts";
   import * as Tooltip from "#lib/components/ui/tooltip/index.ts";
   import * as ScrollArea from "#lib/components/ui/scroll-area/index.ts";
-  import Choice from "#lib/components/Choice.svelte";
+  import { Switch } from "#lib/components/ui/switch/index.ts";
+  import BuiltInValue from "#lib/components/BuiltInValue.svelte";
+  import DateTimeField from "#lib/components/DateTimeField.svelte";
+  import { nextDay, nextQuarterHour } from "#lib/date-picking.ts";
   import TrafficChart from "#lib/components/TrafficChart.svelte";
   import TrafficMeasure from "#lib/components/TrafficMeasure.svelte";
   import InspectorPanel from "#lib/components/InspectorPanel.svelte";
@@ -121,8 +124,10 @@
 
   let gatewaySeen = $state(new Date().toISOString());
 
-  let choice = $state("normal"),
-    checked = $state(true);
+  let checked = $state(true),
+    highPriority = $state(false),
+    enabled = $state(true),
+    ends = $state(nextDay(nextQuarterHour()));
 
   let instanceExpanded = $state(true),
     peerExpanded = $state(true);
@@ -448,18 +453,30 @@
             disabled
           />
         </div>
+        <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div class="flex items-center gap-2">
+            <Switch id="catalog-priority" bind:checked={highPriority} /><Label
+              for="catalog-priority">High priority</Label
+            >
+          </div>
+          <div class="flex items-center gap-2">
+            <Switch id="catalog-enabled" bind:checked={enabled} /><Label
+              for="catalog-enabled">Enabled</Label
+            >
+          </div>
+        </div>
         <div class="field-group">
-          <Label for="catalog-priority">Priority</Label><Choice
-            id="catalog-priority"
-            label="Priority"
-            fullWidth
-            bind:value={choice}
-            options={[
-              { value: "normal", label: "Normal" },
-              { value: "high", label: "High" },
-            ]}
+          <Label for="catalog-ends">Ends</Label><DateTimeField
+            id="catalog-ends"
+            label="Ends"
+            placeholder="No end"
+            bind:value={ends}
           />
         </div>
+        <p>
+          <BuiltInValue kind="any" /> and <BuiltInValue kind="gateway" /> stand apart
+          from names people enter.
+        </p>
         <div class="field-group">
           <Label for="catalog-reason">Reason</Label><Textarea
             id="catalog-reason"
@@ -467,8 +484,8 @@
           />
         </div>
         <div class="flex items-center gap-2">
-          <Checkbox id="catalog-enabled" bind:checked /><Label
-            for="catalog-enabled">Enabled</Label
+          <Checkbox id="catalog-remember" bind:checked /><Label
+            for="catalog-remember">Remember me</Label
           >
         </div>
       </div>
@@ -660,7 +677,7 @@
             description="Blocks this traffic"
             onallow={() => {}}
             onblock={() => {}}
-            locked="Change the catch-all in Settings"
+            locked="Applies when no rule matches. Set in Settings."
           /><span class="text-sm">Catch-all, changed in Settings</span>
         </div>
         <RuleLabel rule={exampleRule} dns="Illustrative DNS dependence" />

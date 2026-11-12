@@ -32,6 +32,7 @@
       "name": "@traffic-policy/controller",
       "version": "0.1.0",
       "dependencies": {
+        "@internationalized/date": "3.12.4",
         "@lucide/svelte": "1.52.0",
         "@node-rs/argon2": "2.2.2",
         "@traffic-policy/contracts": "workspace:*",

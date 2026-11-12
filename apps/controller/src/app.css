@@ -1,9 +1,12 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @custom-variant dark (&:is(.dark *));
-/* Bits UI reports open and closed through data-state, which the shadcn data-open and data-closed classes read. */
+/* Bits UI reports open, closed, checked, and unchecked through data-state, which the shadcn data-open,
+   data-closed, data-checked, and data-unchecked classes read. */
 @custom-variant data-open (&:where([data-state="open"]));
 @custom-variant data-closed (&:where([data-state="closed"]));
+@custom-variant data-checked (&:where([data-state="checked"]));
+@custom-variant data-unchecked (&:where([data-state="unchecked"]));
 @font-face {
   font-family: "Inter";
   font-style: normal;
@@ -564,6 +567,24 @@
   display: inline-flex;
   flex-shrink: 0;
   color: var(--muted-foreground);
+}
+/* A kind dropdown takes the whole row unless it has a value, which sits beside it; ICMP has two. */
+.kind-value {
+  display: grid;
+  gap: 0.5rem;
+}
+@media (min-width: 640px) {
+  .kind-value.has-value {
+    grid-template-columns: minmax(0, 13rem) minmax(0, 1fr);
+  }
+  .kind-value.has-values {
+    grid-template-columns: minmax(0, 13rem) minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+/* Scrollable panes keep a thin, dark scrollbar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a transparent;
 }
 /* Any and Gateway are boxed so they stand apart from names people enter. The tint shows on any
    background, highlighted menu items included; inside fields the text keeps the field's size. */

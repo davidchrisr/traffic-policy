@@ -2,12 +2,14 @@
   import type { Component } from "svelte";
   import * as Select from "#lib/components/ui/select/index.ts";
 
-  // An icon shown before an option's label; the label stays the accessible name.
+  // An icon shown before an option's label. A built-in value such as Any is boxed as it is in rule
+  // text.
   interface Option {
     value: string;
     label: string;
     icon?: Component<{ size?: number; class?: string }>;
     iconClass?: string;
+    builtIn?: boolean;
   }
 
   let {
@@ -40,7 +42,8 @@
         size={15}
         class={current.iconClass}
       />{/if}<span class="min-w-0 flex-1 truncate text-left" title={selected}
-      >{selected}</span
+      >{#if current?.builtIn}<span class="built-in-value">{selected}</span
+        >{:else}{selected}{/if}</span
     ></Select.Trigger
   >
   <Select.Content align="start" class="w-(--bits-select-anchor-width) min-w-0"
@@ -50,7 +53,10 @@
         >{#if option.icon}<option.icon
             size={15}
             class={option.iconClass}
-          />{/if}{option.label}</Select.Item
+          />{/if}<span
+          >{#if option.builtIn}<span class="built-in-value">{option.label}</span
+            >{:else}{option.label}{/if}</span
+        ></Select.Item
       >{/each}</Select.Content
   >
 </Select.Root>

@@ -123,7 +123,7 @@ describe("policy change details", () => {
     ).toEqual([
       ["Service", "UDP 18099", "UDP 18100"],
       [
-        "Expires",
+        "Ends",
         expect.stringContaining("2026"),
         expect.stringContaining("2026"),
       ],
@@ -152,7 +152,7 @@ describe("policy change details", () => {
     );
     expect(deleted!.lines).toEqual([
       {
-        label: "Expires",
+        label: "Ends",
         before: expect.stringContaining("2026"),
         after: null,
       },

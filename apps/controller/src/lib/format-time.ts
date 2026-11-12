@@ -86,3 +86,13 @@ export function formatFullInstant(value: string, locale?: string): string {
     timeStyle: "medium",
   });
 }
+
+// A date field's day and time ("Thu, 12 Nov 2026, 09:00", or "9:00 AM" where the locale uses a
+// 12-hour clock).
+export function formatDateTimeField(date: Date, locale?: string): string {
+  return `${format(date, locale, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${formatTimeOfDay(date, locale)}`;
+}
+
+export function formatTimeOfDay(date: Date, locale?: string): string {
+  return format(date, locale, { timeStyle: "short" });
+}

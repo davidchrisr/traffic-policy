@@ -21,12 +21,14 @@
   import { Input } from "#lib/components/ui/input/index.ts";
   import { Label } from "#lib/components/ui/label/index.ts";
   import { Textarea } from "#lib/components/ui/textarea/index.ts";
-  import { Checkbox } from "#lib/components/ui/checkbox/index.ts";
+  import { Switch } from "#lib/components/ui/switch/index.ts";
   import { dnsAddressRefusal, overriddenBy } from "@traffic-policy/core";
   import { currentTime } from "#lib/clock.ts";
   import { formatInstantInSentence } from "#lib/format-time.ts";
   import { policyTree } from "#lib/rule-state.ts";
+  import { nextDay, nextQuarterHour } from "#lib/date-picking.ts";
   import Choice from "./Choice.svelte";
+  import DateTimeField from "./DateTimeField.svelte";
   import RuleLabel from "./RuleLabel.svelte";
 
   let {
@@ -51,7 +53,7 @@
     peerChoices?: RequestPeer[];
     // False when more DNS names may share the address than `peerChoices` lists.
     suggestionsComplete?: boolean;
-    // The address the rule is for, checked against a hostname or domain rule's DNS destinations.
+    // The address the rule is for, checked against a hostname or domain rule's networks.
     peerAddress?: string | null;
     localNetworks?: string[];
     instances: Instance[];
@@ -78,6 +80,8 @@
     lifetime: "permanent",
     notBefore: "",
     expiresAt: "",
+    // Off admits public answers outside the local networks; on admits only the listed networks.
+    limitNetworks: false,
     dnsDestinations: "",
     reason: "",
   });
@@ -87,6 +91,9 @@
   let loadedKey = $state<string | null>(null),
     initial = $state(""),
     expectedRevision = $state("");
+
+  // The start and end the editor opened with, put back when the lifetime leaves Custom.
+  let loadedTimes = { notBefore: "", expiresAt: "" };
 
   let saving = $state(false),
     error = $state("");
@@ -115,13 +122,19 @@
     }
   }
 
-  function localTime(raw: string | null | undefined): string {
-    if (!raw) return "";
-    const date = new Date(raw);
+  // Custom starts at once and ends a day from the next quarter hour unless an end is already set;
+  // leaving Custom puts back the loaded times, so trying Custom leaves nothing to save.
+  function chooseLifetime(value: string) {
+    fields.lifetime = value;
 
-    return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 19);
+    if (value !== "custom") {
+      fields.notBefore = loadedTimes.notBefore;
+      fields.expiresAt = loadedTimes.expiresAt;
+
+      return;
+    }
+
+    fields.expiresAt ||= nextDay(nextQuarterHour());
   }
 
   $effect(() => {
@@ -171,16 +184,23 @@
           : String(value.icmpCode);
       next.priority = value.priority ?? "normal";
       next.enabled = value.enabled ?? true;
-      next.lifetime = value.expiresAt ? "custom" : "permanent";
-      next.notBefore = localTime(value.notBefore);
-      next.expiresAt = localTime(value.expiresAt);
+      next.lifetime =
+        value.notBefore || value.expiresAt ? "custom" : "permanent";
+      next.notBefore = value.notBefore ?? "";
+      next.expiresAt = value.expiresAt ?? "";
+      next.limitNetworks = Boolean(value.dnsDestinations);
       next.dnsDestinations = value.dnsDestinations?.join(", ") ?? "";
       next.reason = value.reason ?? "";
     }
 
     initial = JSON.stringify(next);
+    loadedTimes = { notBefore: next.notBefore, expiresAt: next.expiresAt };
 
-    if (rule && amend) next.dnsDestinations = amend.dnsDestinations.join(", ");
+    if (rule && amend) {
+      next.limitNetworks = true;
+      next.dnsDestinations = amend.dnsDestinations.join(", ");
+    }
+
     fields = next;
     expectedRevision = revision;
     loadedKey = key;
@@ -194,11 +214,32 @@
   function draft():
     { ok: true; value: RuleInput } | { ok: false; failure: Error } {
     try {
-      let expiresAt: string | null = null;
+      let notBefore: string | null = null,
+        expiresAt: string | null = null;
 
       if (fields.lifetime === "custom") {
-        if (!fields.expiresAt) throw new Error("Select an expiry time");
-        expiresAt = new Date(fields.expiresAt).toISOString();
+        const start = fields.notBefore
+            ? new Date(fields.notBefore).getTime()
+            : null,
+          end = fields.expiresAt ? new Date(fields.expiresAt).getTime() : null;
+
+        // An expired rule keeps its end unless it is changed, so it can be edited and stay expired.
+        if (
+          end !== null &&
+          end <= Date.now() &&
+          fields.expiresAt !== loadedTimes.expiresAt
+        )
+          throw new Error("Select an end in the future");
+
+        // An empty start or one that has passed takes effect at once, so only a later start bounds
+        // the end.
+        const later = start !== null && start > Date.now() ? start : null;
+
+        if (later !== null && end !== null && end <= later)
+          throw new Error("Select an end after the start");
+
+        notBefore = later === null ? null : fields.notBefore;
+        expiresAt = fields.expiresAt || null;
       } else if (fields.lifetime !== "permanent")
         expiresAt = new Date(
           Math.floor(Date.now() / 1000) * 1000 + Number(fields.lifetime) * 1000,
@@ -211,6 +252,17 @@
 
       if (fields.protocol === "tcpudp" && ports === null)
         throw new Error("Enter ports for TCP/UDP");
+
+      const limited =
+        ["hostname", "domain"].includes(fields.peerKind) &&
+        fields.limitNetworks;
+
+      if (limited && !fields.dnsDestinations.trim())
+        throw new Error("Enter at least one network");
+
+      const dnsDestinations = limited
+        ? fields.dnsDestinations.split(",").map((value) => value.trim())
+        : null;
 
       const value = ruleInputSchema.parse({
         subject:
@@ -239,15 +291,9 @@
             : Number(fields.icmpCode),
         priority: fields.priority,
         enabled: fields.enabled,
-        notBefore: fields.notBefore
-          ? new Date(fields.notBefore).toISOString()
-          : null,
+        notBefore,
         expiresAt,
-        dnsDestinations:
-          ["hostname", "domain"].includes(fields.peerKind) &&
-          fields.dnsDestinations.trim()
-            ? fields.dnsDestinations.split(",").map((value) => value.trim())
-            : null,
+        dnsDestinations,
         reason: fields.reason,
       });
 
@@ -300,9 +346,21 @@
       : value;
   });
 
+  // What the peer value field takes for the chosen kind.
+  const peerValue = $derived(
+    fields.peerKind === "ip"
+      ? { label: "IP address", example: "e.g. 192.0.2.10" }
+      : fields.peerKind === "cidr"
+        ? { label: "Network in CIDR notation", example: "e.g. 192.0.2.0/24" }
+        : fields.peerKind === "domain"
+          ? { label: "Domain", example: "e.g. example.com" }
+          : { label: "Hostname", example: "e.g. host.example.com" },
+  );
+
   function addDestination(address: string) {
     const network = `${address}/${address.includes(":") ? 128 : 32}`;
 
+    fields.limitNetworks = true;
     fields.dnsDestinations = fields.dnsDestinations.trim()
       ? `${fields.dnsDestinations.trim()}, ${network}`
       : network;
@@ -374,6 +432,10 @@
   <Dialog.Content
     class="max-h-[90dvh] overflow-y-auto sm:max-w-xl"
     showCloseButton={!dirty && !saving}
+    onOpenAutoFocus={(event) => {
+      event.preventDefault();
+      document.querySelector<HTMLElement>("#rule-action")?.focus();
+    }}
     onEscapeKeydown={(event) => {
       if (dirty || saving) event.preventDefault();
     }}
@@ -382,8 +444,27 @@
     }}
   >
     <Dialog.Header
-      ><Dialog.Title>{rule ? "Edit rule" : "Create rule"}</Dialog.Title
-      ></Dialog.Header
+      class="flex-row flex-wrap items-center gap-x-5 gap-y-2 pr-10"
+    >
+      <Dialog.Title class="flex-1"
+        >{rule ? "Edit rule" : "Create rule"}</Dialog.Title
+      >
+      <div class="flex items-center gap-x-5">
+        <div class="flex items-center gap-2">
+          <Switch
+            id="rule-priority"
+            bind:checked={
+              () => fields.priority === "high",
+              (high) => (fields.priority = high ? "high" : "normal")
+            }
+          /><Label for="rule-priority">High priority</Label>
+        </div>
+        <div class="flex items-center gap-2">
+          <Switch id="rule-enabled" bind:checked={fields.enabled} /><Label
+            for="rule-enabled">Enabled</Label
+          >
+        </div>
+      </div></Dialog.Header
     >
     <form
       onsubmit={(event) => {
@@ -444,44 +525,6 @@
           />
         </div>
         <div class="field-group">
-          <Label for="rule-priority">Priority</Label><Choice
-            fullWidth
-            id="rule-priority"
-            label="Priority"
-            bind:value={fields.priority}
-            options={[
-              { value: "normal", label: "Normal" },
-              { value: "high", label: "High" },
-            ]}
-          />
-        </div>
-      </div>
-      <div class="field-group">
-        <Label for="rule-instance">Instance</Label><Choice
-          fullWidth
-          id="rule-instance"
-          label="Instance"
-          bind:value={fields.subject}
-          options={[
-            { value: "any", label: "Any instance" },
-            ...instances.map((instance) => ({
-              value: instance.id,
-              label: instance.name,
-            })),
-            { value: "address", label: "Address in an instance" },
-          ]}
-        />
-      </div>
-      {#if fields.subject === "address"}<div class="field-group">
-          <Label for="rule-subject-address">Address or network</Label><Input
-            id="rule-subject-address"
-            bind:value={fields.subjectAddress}
-            placeholder="IP or CIDR inside an instance"
-            required
-          />
-        </div>{/if}
-      <div class="grid gap-4 sm:grid-cols-2">
-        <div class="field-group">
           <Label for="rule-direction">Direction</Label><Choice
             fullWidth
             id="rule-direction"
@@ -494,23 +537,92 @@
             ]}
           />
         </div>
-        <div class="field-group">
-          <Label for="rule-peer">Peer</Label><Choice
-            fullWidth
-            id="rule-peer"
-            label="Peer kind"
-            bind:value={fields.peerKind}
-            options={[
-              { value: "any", label: "Any peer" },
-              { value: "gateway", label: "Gateway" },
-              { value: "ip", label: "IP address" },
-              { value: "cidr", label: "Network" },
-              { value: "hostname", label: "Hostname" },
-              { value: "domain", label: "Domain and subdomains" },
-            ]}
-          />
+      </div>
+      <div class="field-group">
+        <Label for="rule-instance">Instance</Label>
+        <div
+          class={["kind-value", fields.subject === "address" && "has-value"]}
+        >
+          <div class="min-w-0">
+            <Choice
+              fullWidth
+              id="rule-instance"
+              label="Instance"
+              bind:value={fields.subject}
+              options={[
+                { value: "any", label: "Any", builtIn: true },
+                ...instances.map((instance) => ({
+                  value: instance.id,
+                  label: instance.name,
+                })),
+                { value: "address", label: "Address in an instance" },
+              ]}
+            />
+          </div>
+          {#if fields.subject === "address"}<Input
+              id="rule-subject-address"
+              aria-label="Address or network"
+              bind:value={fields.subjectAddress}
+              placeholder="IP or CIDR inside an instance"
+              required
+            />{/if}
         </div>
       </div>
+      <div class="field-group">
+        <Label for="rule-peer">Peer</Label>
+        <div
+          class={[
+            "kind-value",
+            !["any", "gateway"].includes(fields.peerKind) && "has-value",
+          ]}
+        >
+          <div class="min-w-0">
+            <Choice
+              fullWidth
+              id="rule-peer"
+              label="Peer kind"
+              bind:value={fields.peerKind}
+              options={[
+                { value: "any", label: "Any", builtIn: true },
+                { value: "gateway", label: "Gateway", builtIn: true },
+                { value: "ip", label: "IP address" },
+                { value: "cidr", label: "Network" },
+                { value: "hostname", label: "Hostname" },
+                { value: "domain", label: "Domain and subdomains" },
+              ]}
+            />
+          </div>
+          {#if !["any", "gateway"].includes(fields.peerKind)}<Input
+              id="rule-peer-value"
+              aria-label={peerValue.label}
+              bind:value={fields.peerValue}
+              placeholder={peerValue.example}
+              required
+            />{/if}
+        </div>
+        {#if fields.peerKind === "gateway"}<p class="muted text-xs">
+            Traffic to or from the gateway itself, not traffic it forwards.
+          </p>{:else if newScope}<p class="muted text-xs">
+            Takes effect on the next lookup from {newScope}.
+          </p>{/if}
+        {#if fields.peerKind === "hostname" || fields.peerKind === "domain"}<div
+            class="mt-1 flex items-center gap-2"
+          >
+            <Switch
+              id="rule-limit-networks"
+              bind:checked={fields.limitNetworks}
+            /><Label for="rule-limit-networks">Limit to networks</Label>
+          </div>{/if}
+      </div>
+      {#if fields.limitNetworks && (fields.peerKind === "hostname" || fields.peerKind === "domain")}<div
+          class="field-group"
+        >
+          <Label for="dns-networks">Networks</Label><Input
+            id="dns-networks"
+            bind:value={fields.dnsDestinations}
+            placeholder="e.g. 192.168.1.0/24, 10.0.0.0/8"
+          />
+        </div>{/if}
       {#if peerChoices.length > 1}<div class="field-group">
           <Label for="request-peer">Observed destination</Label>
           <Choice
@@ -536,117 +648,94 @@
               More names share this address.
             </p>{/if}
         </div>{/if}
-      {#if fields.peerKind === "gateway"}<p class="muted text-xs">
-          Traffic to or from the gateway itself, not traffic it forwards.
-        </p>{:else if fields.peerKind !== "any"}<div class="field-group">
-          <Label for="rule-peer-value"
-            >{fields.peerKind === "cidr"
-              ? "Network in CIDR notation"
-              : "Peer value"}</Label
-          ><Input
-            id="rule-peer-value"
-            bind:value={fields.peerValue}
-            required
-          />{#if newScope}<p class="muted text-xs">
-              Takes effect on the next lookup from {newScope}.
-            </p>{/if}
-        </div>{/if}
-      <div class="grid gap-3 sm:grid-cols-3">
-        <div class="field-group">
-          <Label for="rule-protocol">Protocol</Label><Choice
-            fullWidth
-            id="rule-protocol"
-            label="Protocol"
-            bind:value={fields.protocol}
-            options={[
-              { value: "any", label: "Any" },
-              { value: "6", label: "TCP" },
-              { value: "17", label: "UDP" },
-              { value: "tcpudp", label: "TCP/UDP" },
-              { value: "1", label: "ICMP" },
-              { value: "58", label: "ICMPv6" },
-            ]}
-          />
-        </div>
-        {#if ["6", "17", "tcpudp"].includes(fields.protocol)}<div
-            class="field-group sm:col-span-2"
-          >
-            <Label for="rule-ports">Ports</Label><Input
+      <div class="field-group">
+        <Label for="rule-protocol">Service</Label>
+        <div
+          class={[
+            "kind-value",
+            ["6", "17", "tcpudp"].includes(fields.protocol) && "has-value",
+            ["1", "58"].includes(fields.protocol) && "has-values",
+          ]}
+        >
+          <div class="min-w-0">
+            <Choice
+              fullWidth
+              id="rule-protocol"
+              label="Service"
+              bind:value={fields.protocol}
+              options={[
+                { value: "any", label: "Any", builtIn: true },
+                { value: "6", label: "TCP" },
+                { value: "17", label: "UDP" },
+                { value: "tcpudp", label: "TCP/UDP" },
+                { value: "1", label: "ICMP" },
+                { value: "58", label: "ICMPv6" },
+              ]}
+            />
+          </div>
+          {#if ["6", "17", "tcpudp"].includes(fields.protocol)}<Input
               id="rule-ports"
+              aria-label="Ports"
               bind:value={fields.ports}
-              placeholder="Any, or e.g. 443, 8000-8080"
+              placeholder="Any port, or e.g. 443, 8000-8080"
               aria-invalid={portsError ? "true" : undefined}
               aria-describedby={portsError ? "rule-ports-error" : undefined}
-            />{#if portsError}<p id="rule-ports-error" class="field-error">
-                {portsError}
-              </p>{/if}
-          </div>{/if}
-      </div>
-      {#if fields.protocol === "1" || fields.protocol === "58"}<div
-          class="grid gap-3 sm:grid-cols-2"
-        >
-          <div class="field-group">
-            <Label for="icmp-type">ICMP type</Label><Input
+            />{:else if fields.protocol === "1" || fields.protocol === "58"}<Input
               id="icmp-type"
+              aria-label="ICMP type"
               inputmode="numeric"
               pattern="[0-9]*"
               bind:value={fields.icmpType}
-              placeholder="Any"
-            />
-          </div>
-          <div class="field-group">
-            <Label for="icmp-code">ICMP code</Label><Input
+              placeholder="Any type"
+            /><Input
               id="icmp-code"
+              aria-label="ICMP code"
               inputmode="numeric"
               pattern="[0-9]*"
               bind:value={fields.icmpCode}
-              placeholder="Any"
+              placeholder="Any code"
+            />{/if}
+        </div>
+        {#if portsError && ["6", "17", "tcpudp"].includes(fields.protocol)}<p
+            id="rule-ports-error"
+            class="field-error"
+          >
+            {portsError}
+          </p>{/if}
+      </div>
+      <div class="field-group">
+        <Label for="rule-lifetime">Lifetime</Label><Choice
+          fullWidth
+          id="rule-lifetime"
+          label="Lifetime"
+          bind:value={() => fields.lifetime, chooseLifetime}
+          options={[
+            { value: "permanent", label: "Permanent" },
+            { value: "900", label: "15 minutes" },
+            { value: "3600", label: "1 hour" },
+            { value: "28800", label: "8 hours" },
+            { value: "86400", label: "24 hours" },
+            { value: "custom", label: "Custom" },
+          ]}
+        />
+      </div>
+      {#if fields.lifetime === "custom"}<div class="grid gap-4 sm:grid-cols-2">
+          <div class="field-group">
+            <Label for="rule-start">Starts</Label><DateTimeField
+              id="rule-start"
+              label="Starts"
+              placeholder="Now"
+              bind:value={fields.notBefore}
             />
           </div>
-        </div>{/if}
-      <div class="grid gap-4 sm:grid-cols-2">
-        <div class="field-group">
-          <Label for="rule-start">Activation (optional)</Label><Input
-            id="rule-start"
-            type="datetime-local"
-            step="1"
-            bind:value={fields.notBefore}
-          />
-        </div>
-        <div class="field-group">
-          <Label for="rule-lifetime">Lifetime</Label><Choice
-            fullWidth
-            id="rule-lifetime"
-            label="Lifetime"
-            bind:value={fields.lifetime}
-            options={[
-              { value: "permanent", label: "Permanent" },
-              { value: "900", label: "15 minutes" },
-              { value: "3600", label: "1 hour" },
-              { value: "28800", label: "8 hours" },
-              { value: "86400", label: "24 hours" },
-              { value: "custom", label: "Until a deadline" },
-            ]}
-          />
-        </div>
-      </div>
-      {#if fields.lifetime === "custom"}<div class="field-group">
-          <Label for="rule-expiry">Expiry</Label><Input
-            id="rule-expiry"
-            type="datetime-local"
-            step="1"
-            bind:value={fields.expiresAt}
-            required
-          />
-        </div>{/if}
-      {#if fields.peerKind === "hostname" || fields.peerKind === "domain"}<div
-          class="field-group"
-        >
-          <Label for="dns-networks">Permitted destination networks</Label><Input
-            id="dns-networks"
-            bind:value={fields.dnsDestinations}
-            placeholder="Public addresses outside your local networks"
-          />
+          <div class="field-group">
+            <Label for="rule-expiry">Ends</Label><DateTimeField
+              id="rule-expiry"
+              label="Ends"
+              placeholder="No end"
+              bind:value={fields.expiresAt}
+            />
+          </div>
         </div>{/if}
       {#if unadmitted && peerAddress}<div role="status" class="rule-override">
           <TriangleAlert
@@ -656,23 +745,19 @@
           />
           <div class="min-w-0 space-y-2">
             <p>
-              This request went to {peerAddress}, which isn't in Permitted
-              destination networks, so this rule won't match it.
+              This request went to {peerAddress}, {unadmitted === "outside"
+                ? "outside this rule's networks"
+                : "which isn't a public address"}, so this rule won't match it.
             </p>
             <Button
               variant="outline"
               size="sm"
               type="button"
               onclick={() => addDestination(peerAddress)}
-              >Add to destinations</Button
+              >Add to networks</Button
             >
           </div>
         </div>{/if}
-      <div class="flex items-center gap-2">
-        <Checkbox id="rule-enabled" bind:checked={fields.enabled} /><Label
-          for="rule-enabled">Enabled</Label
-        >
-      </div>
       <div class="field-group">
         <Label for="rule-reason">Reason</Label><Textarea
           id="rule-reason"
