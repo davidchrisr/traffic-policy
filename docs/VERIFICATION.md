@@ -1,5 +1,35 @@
 # Verification
 
+## Build and run checks
+
+Use Linux with the Bun version pinned in `package.json`. Development checks do
+not need a live gateway or root privileges. OpenSSL is required by the TLS
+tests. Run these commands inside a tooling container or isolated development
+environment:
+
+```sh
+bun install --frozen-lockfile
+bun run check
+bun run test
+bun run lint
+bun run lint:markdown
+bun run format:check
+TP_PUBLIC_ORIGIN=https://controller.example.test:9444 bun run build
+```
+
+The build origin must exactly match the controller's configured `publicOrigin`.
+Build the controller separately for each deployment origin. Development and type
+checks can run without this variable; production builds require it.
+
+The [CI workflow](../.github/workflows/ci.yml) runs the quality checks and a
+build without privileged networking. Native firewall and full network
+integration checks require a separate Linux lab.
+
+Run `bun run catalog` to open the component catalog for frontend work.
+[Linting](LINTING.md) explains the ESLint, Oxlint, and anti-slop policies.
+
+## Gateway checks
+
 These recipes use the [development stack](../dev/docker/README.md). Run the
 commands from `dev/docker/` with the env file for the stack being checked. The
 examples use `.env.development`; substitute your filename:
@@ -8,7 +38,7 @@ examples use `.env.development`; substitute your filename:
 stack_env=.env.development
 ```
 
-## Start and check readiness
+### Start and check readiness
 
 [Configure](../dev/docker/README.md#configure-a-stack) and
 [start](../dev/docker/README.md#start) the stack. After changing source, rebuild
@@ -27,7 +57,7 @@ both `enforcement` and `gateway`, and `status` reports equal `desired` and
 build and init containers are removed after they exit. `inspect.sh` also prints
 `conditions`, `instances`, and `requests`.
 
-## Drive it and keep evidence
+### Drive it and keep evidence
 
 Use the browser at `TP_ORIGIN` as Admin, and generate traffic from the client:
 
@@ -41,7 +71,7 @@ observation of the same effect: `inspect.sh` output, the gateway log, or the
 gateway's nftables table. Save evidence outside the stack's volumes, since
 `down -v` removes them.
 
-## Recipes
+### Recipes
 
 - **Unregistered host becomes a Request.** On a fresh stack, send client
   traffic. `inspect.sh requests` lists `TP_CLIENT_ADDRESS`, and Requests shows
@@ -75,7 +105,7 @@ gateway's nftables table. Save evidence outside the stack's volumes, since
   `"step":"receive-buffer"` and stays ready, and `dns_receive_buffer` is active
   until a restart with a size that fits.
 
-## Verification limits
+### Verification limits
 
 - Write service-owned state as `traffic-policy` using `setpriv`, as in the
   saved-policy recipe. The stack intentionally drops `CAP_DAC_OVERRIDE` from
@@ -86,6 +116,6 @@ gateway's nftables table. Save evidence outside the stack's volumes, since
   isolation under the runtime in use; the Compose network's `internal` setting
   alone does not establish isolation.
 
-## Clean up
+### Clean up
 
 See [Stop](../dev/docker/README.md#stop) for shutdown and volume removal.
