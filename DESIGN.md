@@ -79,6 +79,20 @@ short ranges and dates for longer ranges; tooltips retain exact timestamps and
 byte values. The catalog's 20-minute timeline is illustrative. Its system-font
 toggle is a comparison tool confined to the catalog.
 
+## Brand mark
+
+The mark is a fork for allow and block: one line splits, the upper branch passes
+with an arrowhead, and the lower branch stops short of a bar. `LogoMark` draws
+it with round 2.5-unit strokes on Lucide's 24-unit grid, a step heavier than the
+navigation icons, in the current text color beside the product name: 20px in
+navigation and 30px in the sign-in title.
+
+The favicon and installed-app icons use the same drawing, white on black.
+`apps/controller/static/favicon.svg` is the rounded-tile source for the favicon
+and the 192px and 512px icons. `apps/controller/brand/` holds the full-square
+sources: the maskable icon keeps the mark inside the central 80% circle, and the
+Apple touch icon is opaque.
+
 ## Layout and geometry
 
 Use a 4px spacing base with 4, 8, 12, 16, 24, and 32px steps. Page gutters and
@@ -118,7 +132,7 @@ Update timing belongs to Architecture.
 
 The app shell fills the viewport and the page itself never scrolls. Navigation
 and the page header stay in place; content scrolls inside its pane. Desktop
-navigation defaults to 188px and resizes from 160px to 280px. The inspector
+navigation defaults to 188px and resizes from 176px to 280px. The inspector
 defaults to 30% of the split view, resizes from 320px to half of it, and scrolls
 independently of the list. Resizable pane borders have no handle: hovering
 lightens the 1px border to the input color under a resize cursor, and keyboard
@@ -316,10 +330,10 @@ icon.
 ## Catalog and verification
 
 Run `bun run catalog` to open the development catalog. The catalog includes
-semantic color pairs with measured contrast, typography, spacing, geometry,
-state matrices, fields, working overlays, ECharts and a Monitor composition.
-Fixtures are labeled. Production pages use configured data and explicit
-empty/unavailable states.
+semantic color pairs with measured contrast, typography, spacing, geometry, the
+brand mark, state matrices, fields, working overlays, ECharts and a Monitor
+composition. Fixtures are labeled. Production pages use configured data and
+explicit empty/unavailable states.
 
 Verify representative screens at 1280px and 375px, long names, overflow,
 keyboard focus and dismissal, measured alignment, font loading, and contrast.

@@ -162,7 +162,7 @@
   height: 100dvh;
   overflow: hidden;
   /* --nav-width is the width saved by the nav's PaneResizer. */
-  --nav-size: clamp(160px, var(--nav-width, 188px), 280px);
+  --nav-size: clamp(176px, var(--nav-width, 188px), 280px);
 }
 .app-nav {
   display: grid;

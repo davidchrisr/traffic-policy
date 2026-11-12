@@ -5,6 +5,7 @@
   import { Checkbox } from "#lib/components/ui/checkbox/index.ts";
   import { Input } from "#lib/components/ui/input/index.ts";
   import { Label } from "#lib/components/ui/label/index.ts";
+  import LogoMark from "#lib/components/LogoMark.svelte";
 
   let { form }: PageProps = $props();
 
@@ -31,7 +32,9 @@
       autocomplete="username"
     />
     <div>
-      <h1 class="page-title">Traffic Policy</h1>
+      <h1 class="page-title flex items-center gap-3">
+        <LogoMark size={30} />Traffic Policy
+      </h1>
       <p class="muted mt-2">Sign in as Admin to manage network permissions.</p>
     </div>
     <div class="field-group">

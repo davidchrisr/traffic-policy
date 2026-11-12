@@ -9,6 +9,7 @@
   import { api } from "#lib/client.ts";
   import { RefreshRunner } from "#lib/refresh-runner.ts";
   import { shareStatus } from "#lib/live-status.ts";
+  import LogoMark from "#lib/components/LogoMark.svelte";
   import PaneResizer from "#lib/components/PaneResizer.svelte";
   import {
     Activity,
@@ -78,7 +79,7 @@
 >
   <aside class="app-nav" bind:this={nav}>
     <a href="/monitor" class="app-brand text-base font-bold text-foreground!"
-      >Traffic Policy</a
+      ><LogoMark />Traffic Policy</a
     >
     <nav aria-label="Main navigation">
       {#each navigation as item (item.href)}<a
@@ -98,7 +99,7 @@
     label="Resize navigation"
     pane={nav}
     side="start"
-    min={160}
+    min={176}
     max={() => 280}
     storageKey="traffic-policy.nav-width"
     bind:width={navWidth}

@@ -31,6 +31,7 @@
   import TrafficChart from "#lib/components/TrafficChart.svelte";
   import TrafficMeasure from "#lib/components/TrafficMeasure.svelte";
   import InspectorPanel from "#lib/components/InspectorPanel.svelte";
+  import LogoMark from "#lib/components/LogoMark.svelte";
   import { displayTrafficBytes } from "#lib/client.ts";
   import StatusLine from "#lib/components/StatusLine.svelte";
   import SignOutButton from "#lib/components/SignOutButton.svelte";
@@ -339,6 +340,27 @@
         /><Ban size={24} strokeWidth={1.75} /><span class="muted text-xs"
           >Lucide · 16 / 18 / 24px</span
         >
+      </div>
+      <div class="mt-6 flex flex-wrap items-end gap-6">
+        <div>
+          <p
+            class="flex items-center gap-2 text-base font-bold"
+            style:width="188px"
+          >
+            <LogoMark />Traffic Policy
+          </p>
+          <p class="muted mt-1 text-xs">Navigation · 20px</p>
+        </div>
+        <div>
+          <p class="page-title flex items-center gap-3">
+            <LogoMark size={30} />Traffic Policy
+          </p>
+          <p class="muted mt-1 text-xs">Sign-in · 30px</p>
+        </div>
+        <div>
+          <img src="/favicon.svg" alt="" width="32" height="32" />
+          <p class="muted mt-1 text-xs">Favicon · 32px</p>
+        </div>
       </div>
     </section>
     <section id="selection">
