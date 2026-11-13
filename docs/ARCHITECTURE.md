@@ -849,10 +849,27 @@ logged once. Rotation starts once the enforcement service has an applied policy,
 whose settings carry the disk budget. Under storage pressure, every non-empty
 output is archived. The unprivileged EVE reader waits for that marker, resumes
 the saved inode among retained archives after restart, and waits for active
-reads on shutdown. A missing saved source stops collection with a visible error.
-The reader removes closed sources after their data is durably spooled. Under
-pressure it records the unread byte count in a durable coverage condition before
-discarding a closed source. Active writers are never reclaimed.
+reads on shutdown. The saved position holds the source's inode, without the
+device number, which can change when the filesystem is mounted again, and a
+SHA-256 of the source's first KiB, or of its bytes through its first complete
+record while it is shorter, since every record starts alike. A source counts as
+the saved one only when that hash matches, since a restore can give its inode to
+another file, and until a source holds a complete record, it has no hash and its
+inode alone identifies it. When the inode is gone, as after a restore or
+migration copies the files, the one retained source with the same hash and at
+least the saved length is a copy, and reading continues in it at the saved
+offset. When no single source matches and the saved source stays missing for a
+minute, the reader resumes where the newest source's last record ended when the
+miss began, so records Suricata writes during the wait are kept, and records a
+coverage condition naming the unread retained records as missing. If that source
+is gone by then, it resumes after the newest source's last record. It does not
+read retained records again, since normalizing them under the current policy can
+change the data behind an event ID. The minute covers rotation's renames, either
+of which can drop a source from one directory listing. The reader removes closed
+sources after their data is durably spooled, or after that recovery durably
+records their unread records as missing. Under pressure it records the unread
+byte count in a durable coverage condition before discarding a closed source.
+Active writers are never reclaimed.
 
 The focused checks cover lost acknowledgements, committed SQLite recovery after
 SIGKILL, backlog replay, reservation failures, and real full-filesystem writes.

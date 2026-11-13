@@ -190,12 +190,61 @@ const normalizationFailureSchema = z
 const normalizationCoverage =
   "Earlier Suricata records could not be processed; historical coverage is incomplete";
 
+const missingSourceCoverage =
+  "The saved Suricata source is missing; collection resumed where the newest source ended when the miss began, and unread records in retained sources are missing";
+
+// A Suricata source's identity. Rotation archives a source by renaming it, which keeps it on the
+// same filesystem, so the inode alone identifies one; a filesystem's device number can change
+// when it is mounted again, as ZFS datasets do.
+const inodeOf = (stats: { ino: bigint }) => String(stats.ino);
+
+// A file's first `length` bytes, or null when the file is shorter.
+async function readStart(file: FileHandle, length: number) {
+  const buffer = Buffer.alloc(length);
+
+  for (let filled = 0; filled < length;) {
+    const { bytesRead } = await file.read(
+      buffer,
+      filled,
+      length - filled,
+      filled,
+    );
+
+    if (!bytesRead) return null;
+    filled += bytesRead;
+  }
+
+  return buffer;
+}
+
+const sha256 = (bytes: Buffer) =>
+  createHash("sha256").update(bytes).digest("hex");
+
+// A source's head: the SHA-256 of its first bytes, up to 1 KiB, and their count. A file's first
+// bytes never change, so the head identifies the source by content: a copy still matches after a
+// restore or migration changes its inode, and another file given a reused inode does not. Every
+// record starts alike, so a head counts only once it holds the first complete record, whose
+// timestamp and flow ID are its own, or 1 KiB of it; until then it has none.
+async function headOf(file: FileHandle) {
+  const size = (await file.stat({ bigint: true })).size;
+  const bytes = await readStart(file, Number(size < 1024n ? size : 1024n));
+
+  if (bytes === null) throw new Error("Suricata source changed while reading");
+
+  return bytes.length === 1024 || bytes.includes(10)
+    ? { head: sha256(bytes), headBytes: bytes.length }
+    : { head: sha256(Buffer.alloc(0)), headBytes: 0 };
+}
+
 // `condition` is a coverage loss not yet recorded. The next job records it as a condition event
-// followed by its recovery, since later records are processed again.
+// followed by its recovery, since later records are processed again. `head` and `headBytes` are
+// the source's `headOf`, which grows with the source up to 1 KiB.
 const cursorSchema = z
   .object({
     inode: z.string(),
     offset: uint64Schema,
+    head: z.string().regex(/^[a-f0-9]{64}$/),
+    headBytes: z.number().int().min(0).max(1024),
     condition: z.string().nullable(),
     lastNormalizationFailure: normalizationFailureSchema.nullable(),
   })
@@ -220,13 +269,22 @@ const jobSchema = z
   .refine((job) => {
     const bytes = BigInt(job.next.offset) - BigInt(job.before.offset);
 
-    // A job without source bytes only records the cursor's coverage notice.
+    const key = `eve:${job.before.inode}:${job.before.offset}:${bytes}`;
+
+    // A job without source bytes only records the cursor's coverage notice. Its key adds the
+    // notice's own ID, since a later notice can start at the same source offset.
     return (
       job.next.inode === job.before.inode &&
       (bytes > 0n ||
         (job.before.condition !== null && job.next.condition === null)) &&
       bytes <= 262144n &&
-      job.key === `eve:${job.before.inode}:${job.before.offset}:${bytes}`
+      (bytes > 0n
+        ? job.key === key
+        : job.key.startsWith(`${key}:`) &&
+          z
+            .string()
+            .uuid()
+            .safeParse(job.key.slice(key.length + 1)).success)
     );
   }, "Suricata job source identity is invalid");
 
@@ -267,6 +325,10 @@ export class EveReader {
   private job: EveJob | null = null;
   private jobDurable = false;
   private collection: CollectionCommit;
+  // When the saved source was first found missing, on the monotonic clock, and where the newest
+  // source's last record ended then.
+  private missingSince: number | null = null;
+  private missingResume: { inode: string; offset: string } | null = null;
   // The current read failure, cleared by the next successful read.
   condition: string | null = null;
   constructor(
@@ -406,7 +468,7 @@ export class EveReader {
           throw new Error("Suricata source is not a regular file");
         sources.push({
           path,
-          inode: `${current.dev}:${current.ino}`,
+          inode: inodeOf(current),
           closed: path.endsWith(".closed"),
         });
       } catch (error) {
@@ -415,6 +477,142 @@ export class EveReader {
     }
 
     return sources;
+  }
+  // Where a source's last record ends; Suricata may be writing the next one.
+  private async lastRecordEnd(source: { path: string; inode: string }) {
+    const file = await open(source.path, "r");
+
+    try {
+      const actual = await file.stat({ bigint: true });
+
+      if (inodeOf(actual) !== source.inode)
+        throw new Error("Suricata source changed while opening");
+      const buffer = Buffer.alloc(65536);
+
+      let end = actual.size,
+        offset = 0n;
+
+      while (end > 0n) {
+        const start = end > 65536n ? end - 65536n : 0n;
+
+        const length = Number(end - start);
+
+        // A read can return fewer bytes than asked, so the window is filled before it is searched.
+        for (let filled = 0; filled < length;) {
+          const { bytesRead } = await file.read(
+            buffer,
+            filled,
+            length - filled,
+            Number(start) + filled,
+          );
+
+          if (!bytesRead)
+            throw new Error("Suricata source changed while reading");
+          filled += bytesRead;
+        }
+
+        const index = buffer.subarray(0, length).lastIndexOf(10);
+
+        if (index >= 0) {
+          offset = start + BigInt(index) + 1n;
+          break;
+        }
+
+        end = start;
+      }
+
+      return { inode: source.inode, offset: String(offset) };
+    } finally {
+      await file.close();
+    }
+  }
+  // Opens a listed source, checking that it is still the one listed.
+  private async openSource(source: { path: string; inode: string }) {
+    const file = await open(source.path, "r");
+
+    if (inodeOf(await file.stat({ bigint: true })) !== source.inode) {
+      await file.close();
+      throw new Error("Suricata source changed while opening");
+    }
+
+    return file;
+  }
+  private async headOfSource(source: { path: string; inode: string }) {
+    const file = await this.openSource(source);
+
+    return headOf(file).finally(() => file.close());
+  }
+  // Whether a file holds the cursor's source: the same first bytes, and at least its offset. Until
+  // the source holds a complete record, the cursor has no head and relies on the inode alone.
+  private async continues(file: FileHandle) {
+    const cursor = this.cursor!;
+
+    if (BigInt(cursor.offset) > (await file.stat({ bigint: true })).size)
+      return false;
+
+    if (!cursor.headBytes) return true;
+    const bytes = await readStart(file, cursor.headBytes);
+
+    return bytes !== null && sha256(bytes) === cursor.head;
+  }
+  // Opens the cursor's source: the source with its inode when its content matches, or else the
+  // only source whose first bytes match, as after a restore or migration copies the files and
+  // changes their inodes. Returns whether one was found.
+  private async reopen(sources: { path: string; inode: string }[]) {
+    const cursor = this.cursor!,
+      byInode = sources.find((value) => value.inode === cursor.inode);
+
+    if (byInode) {
+      const file = await this.openSource(byInode);
+
+      let found = false;
+
+      try {
+        found = await this.continues(file);
+      } finally {
+        if (!found) await file.close();
+      }
+
+      if (found) {
+        this.file = file;
+
+        return true;
+      }
+    }
+
+    // A cursor without a head has no content to match.
+    if (!cursor.headBytes) return false;
+    const matches: { inode: string; file: FileHandle }[] = [];
+
+    try {
+      for (const source of sources) {
+        if (source === byInode) continue;
+        const file = await this.openSource(source);
+
+        let found = false;
+
+        try {
+          found = await this.continues(file);
+        } finally {
+          if (found) matches.push({ inode: source.inode, file });
+          else await file.close();
+        }
+      }
+
+      if (matches.length !== 1) return false;
+      await this.checkpoint({ ...cursor, inode: matches[0]!.inode });
+      this.file = matches.pop()!.file;
+
+      return true;
+    } finally {
+      for (const match of matches) await match.file.close();
+    }
+  }
+  // The head to save with a cursor in the open source.
+  private async nextHead() {
+    const { head, headBytes } = this.cursor!;
+
+    return headBytes === 1024 ? { head, headBytes } : headOf(this.file!);
   }
   private async checkpoint(next: z.infer<typeof cursorSchema>) {
     const committed = { ...next };
@@ -468,30 +666,70 @@ export class EveReader {
 
     const sources = await this.sources();
 
-    if (!this.file) {
-      const source = this.cursor
-        ? sources.find((value) => value.inode === this.cursor!.inode)
-        : sources[0];
+    // An open source is missing only once it is deleted; its cursor then looks for a copy.
+    if (
+      this.file &&
+      !sources.some((value) => value.inode === this.cursor!.inode) &&
+      (await this.file.stat({ bigint: true })).nlink === 0n
+    ) {
+      await this.file.close();
+      this.file = null;
+    }
 
-      if (!source)
-        throw new Error(
-          this.cursor
-            ? "Unread Suricata source is missing; collection cannot resume"
-            : "Suricata source is missing",
-        );
-      const file = await open(source.path, "r");
-      const actual = await file.stat({ bigint: true });
-      const inode = `${actual.dev}:${actual.ino}`;
-
-      if (inode !== source.inode) {
-        await file.close();
-        throw new Error("Suricata source changed while opening");
+    // A source that stays missing with no copy resumes collection after the newest source's last
+    // record with a coverage condition. Reading retained records again would normalize them under
+    // the current policy, which can change the data behind an event ID. Rotation renames a source
+    // twice, and either rename can drop it from one listing, so the miss must last a minute.
+    if (!this.file && this.cursor && !(await this.reopen(sources))) {
+      // Collection resumes where the newest source ended when the miss began, which keeps the
+      // records Suricata writes during the wait.
+      if (this.missingSince === null) {
+        this.missingResume = sources.length
+          ? await this.lastRecordEnd(sources.at(-1)!)
+          : null;
+        this.missingSince = performance.now();
       }
 
-      this.file = file;
+      if (!sources.length || performance.now() - this.missingSince < 60000)
+        throw new Error("Suricata source is missing");
+      const remembered = this.missingResume;
+
+      // Rotation may have archived that source since, which keeps its place; once it is gone,
+      // collection resumes after the newest source's last record.
+      const resume =
+        remembered && sources.some((value) => value.inode === remembered.inode)
+          ? remembered
+          : await this.lastRecordEnd(sources.at(-1)!);
+
+      await this.checkpoint({
+        ...resume,
+        ...(await this.headOfSource(
+          sources.find((value) => value.inode === resume.inode)!,
+        )),
+        condition: this.cursor.condition
+          ? `${this.cursor.condition}; ${missingSourceCoverage}`
+          : missingSourceCoverage,
+        lastNormalizationFailure: this.cursor.lastNormalizationFailure,
+      });
+      this.missingSince = null;
+      this.missingResume = null;
+
+      if (!(await this.reopen(sources)))
+        throw new Error("Suricata source is missing");
+    } else {
+      this.missingSince = null;
+      this.missingResume = null;
+    }
+
+    if (!this.file) {
+      const source = sources[0];
+
+      if (!source) throw new Error("Suricata source is missing");
+      this.file = await this.openSource(source);
       this.cursor ??= {
-        inode,
+        inode: source.inode,
         offset: "0",
+        ...(await headOf(this.file)),
         condition: null,
         lastNormalizationFailure: null,
       };
@@ -501,7 +739,7 @@ export class EveReader {
       const cursor = this.cursor!;
 
       this.job = jobSchema.parse({
-        key: `eve:${cursor.inode}:${cursor.offset}:0`,
+        key: `eve:${cursor.inode}:${cursor.offset}:0:${randomUUID()}`,
         before: cursor,
         next: { ...cursor, condition: null },
         events: coverageEvents(cursor.condition!),
@@ -517,7 +755,7 @@ export class EveReader {
       (source) => source.inode === this.cursor!.inode,
     );
 
-    if (sourceIndex < 0) throw new Error("Saved Suricata source is missing");
+    if (sourceIndex < 0) throw new Error("Suricata source is missing");
 
     // Earlier closed files have been durably spooled. Keep the current source
     // until its descriptor and cursor have moved to the next file.
@@ -544,6 +782,7 @@ export class EveReader {
         await this.checkpoint({
           inode: next.inode,
           offset: "0",
+          ...(await this.headOfSource(next)),
           condition,
           lastNormalizationFailure: this.cursor!.lastNormalizationFailure,
         });
@@ -588,16 +827,13 @@ export class EveReader {
       const next = sources[sourceIndex + 1];
 
       if (!next) return;
-      const file = await open(next.path, "r");
+      const file = await this.openSource(next);
 
       try {
-        const actual = await file.stat({ bigint: true });
-
-        if (`${actual.dev}:${actual.ino}` !== next.inode)
-          throw new Error("Suricata source changed while opening");
         await this.checkpoint({
           inode: next.inode,
           offset: "0",
+          ...(await headOf(file)),
           condition: null,
           lastNormalizationFailure: cursor.lastNormalizationFailure,
         });
@@ -638,6 +874,7 @@ export class EveReader {
         await this.checkpoint({
           ...cursor,
           offset: (recordEnd + 1n).toString(),
+          ...(await this.nextHead()),
           condition: normalizationCoverage,
           lastNormalizationFailure: failure,
         });
@@ -649,6 +886,7 @@ export class EveReader {
         await this.checkpoint({
           ...cursor,
           offset: saved.size.toString(),
+          ...(await this.nextHead()),
           condition:
             "Closed Suricata source ended with an incomplete record; coverage is partial",
         });
@@ -747,6 +985,7 @@ export class EveReader {
       next: {
         ...cursor,
         offset: (BigInt(cursor.offset) + BigInt(end + 1)).toString(),
+        ...(await this.nextHead()),
         condition: failure ? normalizationCoverage : null,
         lastNormalizationFailure: failure ?? cursor.lastNormalizationFailure,
       },

@@ -3,10 +3,13 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { EveReader, eveObservation } from "./eve.ts";
@@ -578,6 +581,50 @@ describe("Suricata source durability", () => {
       "active.example",
     ]);
   });
+  it("saves the source's inode without its device number, which can change on a remount", async () => {
+    const { path, state, create } = await readerFixture(async () => {});
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+
+    expect(
+      JSON.parse(await readFile(join(state, "eve-cursor.json"), "utf8")).inode,
+    ).toBe(String((await stat(path, { bigint: true })).ino));
+  });
+  it("saves a hash of the source's first bytes, which stops changing after 1 KiB", async () => {
+    const { path, state, create } = await readerFixture(async () => {});
+
+    const cursor = async () =>
+      JSON.parse(await readFile(join(state, "eve-cursor.json"), "utf8"));
+
+    const sha256 = (bytes: Buffer) =>
+      createHash("sha256").update(bytes).digest("hex");
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    expect(await cursor()).toMatchObject({
+      head: sha256(await readFile(path)),
+      headBytes: (await readFile(path)).length,
+    });
+
+    for (let i = 0; i < 8; i++)
+      await appendFile(
+        path,
+        line.replace("proof.example", `more${i}.example`) + "\n",
+      );
+    await reader.read();
+    const head = sha256((await readFile(path)).subarray(0, 1024));
+
+    expect(await cursor()).toMatchObject({ head, headBytes: 1024 });
+    await appendFile(
+      path,
+      line.replace("proof.example", "later.example") + "\n",
+    );
+    await reader.read();
+    expect((await cursor()).head).toBe(head);
+  });
   it("retries the same source identity after a failed cursor checkpoint", async () => {
     let fail = true;
     const observed: GatewayEvent[] = [];
@@ -639,19 +686,469 @@ describe("Suricata source durability", () => {
       JSON.parse(await readFile(join(state, "eve-cursor.json"), "utf8")).offset,
     ).not.toBe("0");
   });
-  it("reports a missing saved source without silently skipping to a new file", async () => {
-    const { path, create } = await readerFixture(async () => {});
+  it("resumes where the newest source ended when the saved source went missing, with a coverage condition, after a minute", async () => {
+    const observed: GatewayEvent[] = [],
+      keys: string[] = [];
+
+    const { path, create } = await readerFixture(async (events, key) => {
+      observed.push(...events);
+      keys.push(key);
+    });
+
     const reader = create();
     await reader.start();
     await reader.read();
     await reader.close();
     await rename(path, path + ".unmanaged");
-    await writeFile(path, line + "\n");
+    const archive = path + ".1791580000000-aaaaaaaa.closed";
+    await writeFile(
+      archive,
+      line.replace("proof.example", "archived.example") + "\n",
+    );
+    const partial = line.replace("proof.example", "partial.example");
+    await writeFile(
+      path,
+      line.replace("proof.example", "unread.example") +
+        "\n" +
+        partial.slice(0, 40),
+    );
+    // Reads return at most 100 bytes, as a read may, while the reader finds the last record.
+    const handle = await open(path, "r");
+
+    const prototype = Object.getPrototypeOf(handle) as FileHandle;
+    await handle.close();
+
+    const read = prototype.read as (
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => ReturnType<FileHandle["read"]>;
+
+    const shortRead = vi.spyOn(prototype, "read").mockImplementation(function (
+      this: FileHandle,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) {
+      return read.call(this, buffer, offset, Math.min(length, 100), position);
+    } as never);
+
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000_000);
+
     const restored = create();
     await restored.start();
-    await expect(restored.read()).rejects.toThrow(
-      "Unread Suricata source is missing",
+    await expect(restored.read()).rejects.toThrow("Suricata source is missing");
+    shortRead.mockRestore();
+    // Records written during the wait are read after it.
+    await appendFile(
+      path,
+      partial.slice(40) +
+        "\n" +
+        line.replace("proof.example", "waiting.example") +
+        "\n",
     );
+    now.mockReturnValue(1_059_999);
+    await expect(restored.read()).rejects.toThrow("Suricata source is missing");
+    now.mockReturnValue(1_060_000);
+    await restored.read();
+
+    for (let i = 0; i < 3; i++) await restored.read();
+    expect(
+      observed.map((event) => event.details.hostname ?? event.details),
+    ).toEqual([
+      "proof.example",
+      {
+        code: "suricata_coverage",
+        message: expect.stringContaining(
+          "The saved Suricata source is missing",
+        ),
+        recovered: false,
+      },
+      {
+        code: "suricata_coverage",
+        message: "Suricata records are processed again",
+        recovered: true,
+      },
+      "partial.example",
+      "waiting.example",
+    ]);
+    expect(keys[1]).toMatch(/^eve:\d+:\d+:0:[0-9a-f-]{36}:0$/);
+    await expect(stat(archive)).rejects.toThrow();
+  });
+  it("keeps the remembered place when rotation archives the newest source during the wait", async () => {
+    const observed: GatewayEvent[] = [];
+
+    const { path, create } = await readerFixture(async (events) => {
+      observed.push(...events);
+    });
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await reader.close();
+    await rename(path, path + ".unmanaged");
+    await writeFile(
+      path,
+      line.replace("proof.example", "unread.example") + "\n",
+    );
+
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000_000);
+
+    const restored = create();
+    await restored.start();
+    await expect(restored.read()).rejects.toThrow("Suricata source is missing");
+    await appendFile(
+      path,
+      line.replace("proof.example", "rotated.example") + "\n",
+    );
+    await rename(path, path + ".1791580000000-aaaaaaaa.closed");
+    await writeFile(
+      path,
+      line.replace("proof.example", "active.example") + "\n",
+    );
+    now.mockReturnValue(1_060_000);
+
+    for (let i = 0; i < 5; i++) await restored.read();
+    expect(
+      observed.map((event) => event.details.hostname ?? event.details.code),
+    ).toEqual([
+      "proof.example",
+      "suricata_coverage",
+      "suricata_coverage",
+      "rotated.example",
+      "active.example",
+    ]);
+  });
+  it("does not resume elsewhere while the open source is still linked", async () => {
+    const { path, state, create } = await readerFixture(async () => {});
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+
+    const saved = JSON.parse(
+      await readFile(join(state, "eve-cursor.json"), "utf8"),
+    );
+
+    await rename(path, path + ".unmanaged");
+    await writeFile(path, line + "\n");
+
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000_000);
+
+    await expect(reader.read()).rejects.toThrow("Suricata source is missing");
+    now.mockReturnValue(2_000_000);
+    await expect(reader.read()).rejects.toThrow("Suricata source is missing");
+    expect(
+      JSON.parse(await readFile(join(state, "eve-cursor.json"), "utf8")),
+    ).toEqual(saved);
+  });
+  it("starts the missing-source wait again after the source reappears or the reader restarts", async () => {
+    const { path, state, create } = await readerFixture(async () => {});
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await reader.close();
+
+    const cursor = async () =>
+      JSON.parse(await readFile(join(state, "eve-cursor.json"), "utf8"))
+        .inode as string;
+
+    const saved = await cursor();
+
+    await rename(path, path + ".unmanaged");
+    await writeFile(
+      path + ".other",
+      line.replace("proof.example", "other.example") + "\n",
+    );
+
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000_000);
+
+    const restored = create();
+    await restored.start();
+    await expect(restored.read()).rejects.toThrow("Suricata source is missing");
+    await rename(path + ".unmanaged", path);
+    now.mockReturnValue(1_030_000);
+    await restored.read();
+    // Deleted while open, the source is missing again; the wait starts over.
+    await rm(path);
+    await rename(path + ".other", path);
+    now.mockReturnValue(1_070_000);
+    await expect(restored.read()).rejects.toThrow("Suricata source is missing");
+    await restored.close();
+    const later = create();
+    await later.start();
+    now.mockReturnValue(1_140_000);
+    await expect(later.read()).rejects.toThrow("Suricata source is missing");
+    expect(await cursor()).toBe(saved);
+    now.mockReturnValue(1_200_000);
+    await later.read();
+    expect(await cursor()).toBe(
+      String((await stat(path, { bigint: true })).ino),
+    );
+  });
+  it("continues in a restored copy of the saved source at its offset, without a gap", async () => {
+    const observed: GatewayEvent[] = [];
+
+    const { path, state, create } = await readerFixture(async (events) => {
+      observed.push(...events);
+    });
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await reader.close();
+    // A restore copies the file, which gives it another inode.
+    await writeFile(path + ".copy", await readFile(path));
+    await rm(path);
+    await rename(path + ".copy", path);
+    await appendFile(
+      path,
+      line.replace("proof.example", "after.example") + "\n",
+    );
+    const restored = create();
+    await restored.start();
+    await restored.read();
+    expect(observed.map((event) => event.details.hostname)).toEqual([
+      "proof.example",
+      "after.example",
+    ]);
+    expect(
+      JSON.parse(await readFile(join(state, "eve-cursor.json"), "utf8")).inode,
+    ).toBe(String((await stat(path, { bigint: true })).ino));
+  });
+  it("continues in a restored copy of an archived source, then the newer sources", async () => {
+    const observed: GatewayEvent[] = [];
+
+    const { path, create } = await readerFixture(async (events) => {
+      observed.push(...events);
+    });
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await reader.close();
+    await appendFile(
+      path,
+      line.replace("proof.example", "unread.example") + "\n",
+    );
+    const archive = path + ".1791580000000-aaaaaaaa.closed";
+    await writeFile(archive, await readFile(path));
+    await rm(path);
+    await writeFile(
+      path,
+      line.replace("proof.example", "active.example") + "\n",
+    );
+    const restored = create();
+    await restored.start();
+
+    for (let i = 0; i < 4; i++) await restored.read();
+    expect(observed.map((event) => event.details.hostname)).toEqual([
+      "proof.example",
+      "unread.example",
+      "active.example",
+    ]);
+  });
+  it("treats a source that reuses the saved inode with other content as missing", async () => {
+    const observed: GatewayEvent[] = [];
+
+    const { path, state, create } = await readerFixture(async (events) => {
+      observed.push(...events);
+    });
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await reader.close();
+    await rename(path, path + ".unmanaged");
+    await writeFile(
+      path,
+      line.replace("proof.example", "reused.example") +
+        "\n" +
+        line.replace("proof.example", "next.example") +
+        "\n",
+    );
+
+    // The inode number now names another file, as a restore can assign.
+    const saved = JSON.parse(
+      await readFile(join(state, "eve-cursor.json"), "utf8"),
+    );
+
+    await writeFile(
+      join(state, "eve-cursor.json"),
+      JSON.stringify({
+        ...saved,
+        inode: String((await stat(path, { bigint: true })).ino),
+      }),
+    );
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000_000);
+
+    const restored = create();
+    await restored.start();
+    await expect(restored.read()).rejects.toThrow("Suricata source is missing");
+    await appendFile(
+      path,
+      line.replace("proof.example", "waiting.example") + "\n",
+    );
+    now.mockReturnValue(1_060_000);
+
+    for (let i = 0; i < 3; i++) await restored.read();
+    expect(
+      observed.map((event) => event.details.hostname ?? event.details.code),
+    ).toEqual([
+      "proof.example",
+      "suricata_coverage",
+      "suricata_coverage",
+      "waiting.example",
+    ]);
+  });
+  it("identifies a source it has not read yet by content after a restore reuses its inode", async () => {
+    const observed: GatewayEvent[] = [];
+
+    const { path, state, create } = await readerFixture(async (events) => {
+      observed.push(...events);
+    });
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await rename(path, path + ".1791580000000-aaaaaaaa.closed");
+    await writeFile(path, line.replace("proof.example", "b.example") + "\n");
+    // The reader moves to the new source before reading any of it.
+    await reader.read();
+    await reader.close();
+    const archive = path + ".1791580000001-bbbbbbbb.closed";
+    await writeFile(archive, await readFile(path));
+    await rm(path);
+    await writeFile(path, line.replace("proof.example", "c.example") + "\n");
+
+    // The restore gave the saved inode to the newest source.
+    const saved = JSON.parse(
+      await readFile(join(state, "eve-cursor.json"), "utf8"),
+    );
+
+    expect(saved.offset).toBe("0");
+    await writeFile(
+      join(state, "eve-cursor.json"),
+      JSON.stringify({
+        ...saved,
+        inode: String((await stat(path, { bigint: true })).ino),
+      }),
+    );
+    const restored = create();
+    await restored.start();
+
+    for (let i = 0; i < 4; i++) await restored.read();
+    expect(observed.map((event) => event.details.hostname)).toEqual([
+      "proof.example",
+      "b.example",
+      "c.example",
+    ]);
+  });
+  it("relies on the inode while the next source has no complete record", async () => {
+    const observed: GatewayEvent[] = [];
+
+    const { path, create } = await readerFixture(async (events) => {
+      observed.push(...events);
+    });
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await rename(path, path + ".1791580000000-aaaaaaaa.closed");
+    await writeFile(path, "");
+    await reader.read();
+    await reader.close();
+    const restored = create();
+    await restored.start();
+    await appendFile(
+      path,
+      line.replace("proof.example", "next.example") + "\n",
+    );
+
+    for (let i = 0; i < 3; i++) await restored.read();
+    expect(observed.map((event) => event.details.hostname)).toEqual([
+      "proof.example",
+      "next.example",
+    ]);
+  });
+  it("does not match another source by part of the first record, which every record shares", async () => {
+    const { path, state, create } = await readerFixture(async () => {});
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await rename(path, path + ".1791580000000-aaaaaaaa.closed");
+    await writeFile(path, line.slice(0, 20));
+    await reader.read();
+    await reader.close();
+    await rm(path);
+    await writeFile(path, line.replace("proof.example", "c.example") + "\n");
+
+    // The saved inode is gone.
+    const saved = JSON.parse(
+      await readFile(join(state, "eve-cursor.json"), "utf8"),
+    );
+
+    expect(saved).toMatchObject({ offset: "0", headBytes: 0 });
+    await writeFile(
+      join(state, "eve-cursor.json"),
+      JSON.stringify({ ...saved, inode: "1" }),
+    );
+    vi.spyOn(performance, "now").mockReturnValue(1_000_000);
+
+    const restored = create();
+    await restored.start();
+    await expect(restored.read()).rejects.toThrow("Suricata source is missing");
+  });
+  it("skips a closed source that ended inside its first record, with a coverage condition", async () => {
+    const observed: GatewayEvent[] = [];
+
+    const { path, create } = await readerFixture(async (events) => {
+      observed.push(...events);
+    });
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await rename(path, path + ".1791580000000-aaaaaaaa.closed");
+    await writeFile(path + ".1791580000001-bbbbbbbb.closed", line.slice(0, 20));
+    await writeFile(path, line.replace("proof.example", "c.example") + "\n");
+
+    for (let i = 0; i < 6; i++) await reader.read();
+    expect(
+      observed.map((event) => event.details.hostname ?? event.details.message),
+    ).toEqual([
+      "proof.example",
+      "Closed Suricata source ended with an incomplete record; coverage is partial",
+      "Suricata records are processed again",
+      "c.example",
+    ]);
+  });
+  it("does not choose between two copies of the saved source", async () => {
+    const { path, state, create } = await readerFixture(async () => {});
+
+    const reader = create();
+    await reader.start();
+    await reader.read();
+    await reader.close();
+    const saved = await readFile(join(state, "eve-cursor.json"), "utf8");
+
+    await writeFile(
+      path + ".1791580000000-aaaaaaaa.closed",
+      await readFile(path),
+    );
+    await writeFile(path + ".copy", await readFile(path));
+    await rm(path);
+    await rename(path + ".copy", path);
+    vi.spyOn(performance, "now").mockReturnValue(1_000_000);
+
+    const restored = create();
+    await restored.start();
+    await expect(restored.read()).rejects.toThrow("Suricata source is missing");
+    expect(await readFile(join(state, "eve-cursor.json"), "utf8")).toBe(saved);
   });
   it("keeps normalized chunks and their progress when a later chunk fails and policy changes", async () => {
     let current = policy,
