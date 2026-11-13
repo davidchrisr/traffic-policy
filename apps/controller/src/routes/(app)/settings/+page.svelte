@@ -75,8 +75,15 @@
   const sizeText = (values: Record<SizeKey, string>) =>
     sizeFields.map(({ key }) => formatByteSize(values[key]));
 
+  // The saved settings and catch-all, to tell whether a draft still starts from them.
+  const savedSettings = (value: typeof data) =>
+    JSON.stringify([value.settings, catchAllDraft(value.catchAll)]);
+
   let model = $state.raw(untrack(() => data)),
     settings = $state(untrack(() => structuredClone(data.settings))),
+    // The revision and saved values the settings draft starts from.
+    settingsRevision = $state(untrack(() => data.revision)),
+    settingsBase = $state(untrack(() => savedSettings(data))),
     sizes = $state(untrack(() => sizeText(data.settings))),
     catchAll = $state(untrack(() => catchAllDraft(data.catchAll))),
     sizesLeft = $state(sizeFields.map(() => false)),
@@ -135,6 +142,9 @@
   let leavingTo = $state<URL | null>(null),
     discarding = false;
 
+  // Discard changes asks the same question and stays on the page.
+  let discardOpen = $state(false);
+
   beforeNavigate((navigation) => {
     if (!dirty || discarding) return;
     navigation.cancel();
@@ -148,6 +158,14 @@
     discarding = true;
     leavingTo = null;
     void goto(target);
+  }
+
+  async function discardChanges() {
+    discardOpen = false;
+    settingFields = [];
+    // Dropping the draft first leaves Save changes nothing to submit while the refresh runs.
+    resetSettings();
+    await refreshSettings();
   }
 
   async function removeInstance() {
@@ -187,6 +205,10 @@
   const resourcesRunner = new RefreshRunner<typeof data>({
     onValue: (next) => {
       model = next;
+
+      // A change elsewhere in the policy leaves the draft valid; one to the settings does not.
+      if (savedSettings(next) === settingsBase)
+        settingsRevision = next.revision;
     },
     onError: (failure) => {
       throw failure;
@@ -240,6 +262,8 @@
     sizes = sizeText(model.settings);
     catchAll = catchAllDraft(model.catchAll);
     sizesLeft = sizeFields.map(() => false);
+    settingsRevision = model.revision;
+    settingsBase = savedSettings(model);
   }
 
   let settingFields = $state<{ path: string; message: string }[]>([]);
@@ -290,7 +314,7 @@
 
     try {
       await api("settings", "PUT", {
-        expectedRevision: model.revision,
+        expectedRevision: settingsRevision,
         settings,
         catchAll,
       });
@@ -309,6 +333,20 @@
       error = accepted
         ? `Settings saved. The displayed values could not be refreshed. ${message}`
         : message;
+
+      // After a conflict the draft stays. It saves on the next attempt unless the settings were
+      // saved elsewhere since it started; then it is refused until discarded, so it cannot
+      // overwrite them.
+      if (failure instanceof ApiError && failure.status === 409)
+        try {
+          await refresh();
+
+          if (savedSettings(model) !== settingsBase)
+            error =
+              "Settings were changed elsewhere. Discard your changes to load them.";
+        } catch {
+          // The next save conflicts again and retries.
+        }
     } finally {
       saving = false;
     }
@@ -431,6 +469,11 @@
         class={refreshingResources ? "animate-spin" : undefined}
       /></Button
     >
+    {#if dirty}<Button
+        variant="outline"
+        disabled={saving || refreshingResources}
+        onclick={() => (discardOpen = true)}>Discard changes</Button
+      >{/if}
     <Button
       disabled={!dirty || saving || sizesInvalid || catchAllMissing}
       onclick={save}>{saving ? "Saving…" : "Save changes"}</Button
@@ -797,9 +840,11 @@
   ></Dialog.Root
 >
 <Dialog.Root
-  open={leavingTo !== null}
+  open={leavingTo !== null || discardOpen}
   onOpenChange={(open) => {
-    if (!open) leavingTo = null;
+    if (open) return;
+    leavingTo = null;
+    discardOpen = false;
   }}
 >
   <Dialog.Content
@@ -817,8 +862,13 @@
       ><Button
         variant="outline"
         data-leave-cancel
-        onclick={() => (leavingTo = null)}>Keep editing</Button
-      ><Button variant="destructive" onclick={discardAndLeave}
+        onclick={() => {
+          leavingTo = null;
+          discardOpen = false;
+        }}>Keep editing</Button
+      ><Button
+        variant="destructive"
+        onclick={leavingTo ? discardAndLeave : discardChanges}
         >Discard changes</Button
       ></Dialog.Footer
     >
