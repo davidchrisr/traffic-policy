@@ -16,6 +16,10 @@ blocked requests.
 - Apply global, instance, and address rules for addresses, domains, protocols,
   and ports, with priorities and expiration times. Instances can be hosts or
   whole subnets; nested ones inherit their parents' rules.
+- Keep shared rules in rule sets and attach each set to the instances that need
+  it. Editing a set changes every instance it is attached to, and an instance's
+  own rules win over its sets. Export sets to files and import them on other
+  controllers.
 - Drop traffic from hosts no instance covers and ask to register the ones seen
   on any interface other than upstream ones.
 - Choose whether DNS answers require prior connection approval. Connection rules

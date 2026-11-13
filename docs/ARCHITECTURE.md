@@ -262,18 +262,19 @@ traffic, not desktop processes. Instance-wide permissions and global defaults
 are ordinary broad rules. Their grouping in the dashboard does not change
 precedence. Network commissioning and DHCP are separate from application policy.
 
-A rule's subject is every instance, one instance, or an address range (an IP or
-CIDR) inside an instance. Instance addresses and address subjects form a tree:
-CIDRs either nest or are disjoint, an exact network belongs to one instance, and
-an address subject must lie inside an instance without naming one of its exact
-addresses. An address receives the rules of every range that contains it, so a
-nested instance or address subject adds rules to its parents' instead of
-replacing them. A host's most specific instance names it in observations and
-Requests. Registering an address as an instance of its own moves the rules
-written for exactly that address to the instance, which keeps the host's
-effective policy; adding it to an instance with other addresses is refused while
-such rules exist, so registration never widens a rule. Removing an instance or a
-range is refused while an address subject would fall outside every instance.
+A rule's subject is every instance, one instance, an address range (an IP or
+CIDR) inside an instance, or a [rule set](#rule-sets). Instance addresses and
+address subjects form a tree: CIDRs either nest or are disjoint, an exact
+network belongs to one instance, and an address subject must lie inside an
+instance without naming one of its exact addresses. An address receives the
+rules of every range that contains it, so a nested instance or address subject
+adds rules to its parents' instead of replacing them. A host's most specific
+instance names it in observations and Requests. Registering an address as an
+instance of its own moves the rules written for exactly that address to the
+instance, which keeps the host's effective policy; adding it to an instance with
+other addresses is refused while such rules exist, so registration never widens
+a rule. Removing an instance or a range is refused while an address subject
+would fall outside every instance.
 
 Active matching rules compare lexicographically by priority, peer, port presence
 and the number of ports covered, ICMP type, ICMP code, protocol, subject, and
@@ -281,10 +282,11 @@ direction. Block wins an otherwise equal tie; UUID breaks remaining ties. High
 priority outranks Normal. Peer order is exact IP, host-length CIDR, or the
 gateway, then exact hostname, domain, CIDR, then any peer. Deeper domains and
 longer CIDRs win within their kind. DNS-derived permissions retain their
-selector's rank. The subject key is the prefix length of the subject's range
-that covers the address, above global rules, so a nested scope overrides its
-parent only on an otherwise equal tie. More-specific global and parent rules can
-outrank broad nested rules.
+selector's rank. The subject key grows with the prefix length of the subject's
+range that covers the address, above global rules, so a nested scope overrides
+its parent only on an otherwise equal tie. A rule set ranks just below the
+instance it is attached to. More-specific global and parent rules can outrank
+broad nested rules.
 
 Direction describes who initiates relative to an instance. Outgoing downloads
 still receive bytes on an outgoing connection. The service port is the remote
@@ -309,6 +311,44 @@ delete a rule or change its enabled flag. Renew requires a new duration or
 deadline; enabling an expired rule does not make it permanent. Linux time
 synchronization supplies the clock, without an application NTP startup gate. An
 incorrect platform clock can change when deadlines take effect.
+
+## Rule sets
+
+A rule set is a named list of rules in the policy; the policy holds up to 256. A
+rule belongs to a set by naming it as its subject, so a set's rules are ordinary
+rules with their own IDs, counters, schedules, and History. A set is attached to
+every instance, to listed instances, or to none. Its rules apply at the
+addresses of the instances it is attached to, nested networks included, and
+nowhere while it is unattached. Nothing is copied: editing a set's rule changes
+enforcement for every attached instance in one revision, and attaching or
+detaching changes only the set's members.
+
+At an address, subjects rank from lowest to highest: Any rules, sets attached to
+every instance, then for each range covering the address from the widest in, the
+sets attached to that range's instance followed by the range's own rules. An
+instance's own rule therefore wins over its sets' rules on an otherwise equal
+tie, a set's rule wins over the containing instances' rules, and a set attached
+to every instance wins over Any rules. As with other subjects, a more specific
+peer or service outranks a broader one whatever the subject. Two sets attached
+to the same instance rank equally; a single direction over both, then Block, and
+then the rule ID decide between their rules.
+
+Whether a rule is overridden is decided over every scope path its subject
+reaches: a set attached to an instance and to one nested inside it outranks the
+outer instance's rules only in the nested one, so neither rule overrides the
+other.
+
+Saving an instance's rules as a set moves its permanent rules into a new set
+attached to that instance. The rules keep their IDs and now rank below the rules
+the instance keeps. They also stop outranking the instance's other sets and tie
+with them instead, which can change the rule that wins; the dialog says so when
+the instance has other sets. Deleting a set deletes its rules. Removing an
+instance detaches it from every set and leaves the sets. A rule set file carries
+a set's name and rules without identities or members; importing one always
+creates a new unattached set, so two controllers' sets change independently.
+Attachments keep scope paths and connection marks unchanged, so learned DNS
+addresses and established connections stay with their path when a set is
+attached or detached.
 
 ## Policy and DNS
 
@@ -537,23 +577,37 @@ Traffic bypassing the gateway is outside coverage.
 ### Enforcement chains and unregistered traffic
 
 The enforcement service compiles one chain pair per distinct path of scopes in
-each family, holding the global rules and the rules of every scope on the path
-in precedence order and ending with the missing-winner drop. Interval verdict
-maps keyed by the connection's original and reply source addresses dispatch each
-packet to its path's chains; their elements are each range minus its nested
-ranges, so they never overlap. Allow verdicts return to the hook, so both
-managed endpoints' chains run. In `input` and `output` the gateway is one end,
-so only the other is dispatched: the initiator of a connection the gateway
-receives, or the responder of one it starts. A hostname rule keeps a set of
-learned addresses per path, filled by lookups of clients on that path, so only
-clients that inherit the same rules share what one of them learned. An answer
-address in the other family than the lookup, such as an AAAA answer to a lookup
-over IPv4, fills the sets of every path of the client's instance in that family
-that some address has, since nothing tells which of those addresses the client
-uses; each path binds it only to the rules that apply there, so its own
-precedence still decides. Learned addresses and the connections they admitted
-end when no address has their path any more, such as when an address rule is
-added above the only client on it.
+each family, holding the global rules, the rules of every scope on the path, and
+the rules of every rule set attached there, in precedence order and ending with
+the missing-winner drop. Interval verdict maps keyed by the connection's
+original and reply source addresses dispatch each packet to its path's chains;
+their elements are each range minus its nested ranges, so they never overlap.
+Allow verdicts return to the hook, so both managed endpoints' chains run. In
+`input` and `output` the gateway is one end, so only the other is dispatched:
+the initiator of a connection the gateway receives, or the responder of one it
+starts. A hostname rule keeps a set of learned addresses per path, filled by
+lookups of clients on that path, so only clients that inherit the same rules
+share what one of them learned. An answer address in the other family than the
+lookup, such as an AAAA answer to a lookup over IPv4, fills the sets of every
+path of the client's instance in that family that some address has, since
+nothing tells which of those addresses the client uses; each path binds it only
+to the rules that apply there, so its own precedence still decides. Learned
+addresses and the connections they admitted end when no address has their path
+any more, such as when an address rule is added above the only client on it.
+
+Each chain repeats every rule that applies on its path, so the program grows
+with the number of rule and path pairs, and a rule set attached to many
+instances counts once for each of their paths. Two limits bound it. The policy
+schema refuses more than 50,000 such pairs, and the gateway refuses a compiled
+program above 4 MiB with `native_policy_capacity`. The controller has saved the
+policy by then, so the gateway keeps enforcing the previous one, Status shows
+Rule changes as Not confirmed, and History lists the gateway's message under
+System status until a smaller policy is saved. A pair compiles to about 143
+bytes for an IP Allow, 580 for an IP Block, 653 for a hostname or domain Allow,
+and 788 for a hostname or domain Block, so the program limit is reached near
+29,000 IP Allow pairs or 5,300 named Block pairs, before the schema limit. Both
+limits belong to this compilation and are to be removed once chains share rule
+bodies between paths.
 
 A connection with no instance on either end is unregistered. `forward` drops it
 after both dispatches, and `input` drops connections unregistered addresses

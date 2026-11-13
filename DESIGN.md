@@ -151,7 +151,11 @@ dialog.
 
 Leaving Settings with unsaved changes asks first. In-app navigation opens a
 "Discard unsaved changes?" dialog where Keep editing receives initial focus;
-closing or reloading the tab shows the browser's own prompt.
+closing or reloading the tab shows the browser's own prompt. While there are
+unsaved changes, Discard changes sits beside Save changes; it opens the same
+dialog and, once confirmed, loads the saved settings. Refresh keeps unsaved
+changes. A save refused because the settings were changed elsewhere keeps them
+too, and its error says to discard them to load the saved settings.
 
 Monitor lists instances, destinations, and services above the timeline. The
 desktop list scrolls within 55dvh and supports keyboard scrolling; narrow
@@ -211,10 +215,12 @@ labels truncate visually while preserving their full accessible label.
 RuleEditor shares creation and editing fields. Preserve drafts on conflicts and
 failed saves and distinguish saving, confirmed success, and errors. Unsaved
 drafts prevent accidental Escape/outside dismissal. Cancellation is explicit.
-Requests and Monitor use this same editor. Its Instance choice lists Any
-instance, each instance, and Address in an instance; the last reveals an address
-field with field help explaining that the address keeps its instance's rules and
-moves to an instance registered for it.
+Requests and Monitor use this same editor. Its Applies to choice lists Any, each
+instance, Address in an instance, and each rule set with the rule set icon.
+Address in an instance reveals an address field with field help explaining that
+the address keeps its instance's rules and moves to an instance registered for
+it. A rule set shows one line below the choice stating how many instances use
+it.
 
 Settings provides Add and Edit instance actions through one dialog. Validation
 errors remain in the dialog with field descriptions. Failed saves preserve the
@@ -245,6 +251,28 @@ newest looked-up name, and an outline Register button in place of the
 Allow/Block pair. Register opens a dialog choosing New instance or Add to an
 instance, with name and address fields, and states how many rules for exactly
 that address move to the instance.
+
+Rules lists the rule sets attached to a group below the group's own rules, each
+as one row: a toggle labeled From and the set's name with its rule count, an
+Edit action that opens the set, and Detach. The toggle expands the set's rules
+as indented rows, which select and inspect like other rules; while a filter is
+active the matching rules stay expanded and sets without a match are hidden.
+Sets attached to every instance appear under Any. An instance group's heading
+has a menu with Attach rule set, listing the sets not yet attached, and Save as
+rule set when the instance has permanent rules. Save as rule set asks for a name
+and states how many rules move, that they rank below the rules the instance
+keeps, and, when the instance has other rule sets, that they no longer rank
+above those.
+
+Rule sets lists each set as a group of its rules with Add rule below them and
+Edit and Delete on each row. The group heading shows the set's name, its rule
+count, and Every instance, the number of instances, or Not attached. Selecting a
+set opens its inspector: Attached to, listing each instance or Any with a remove
+action; an Attach to choice with no default, listing instances before Any; and
+Export, Rename, and Delete. Deleting a set asks for confirmation that names the
+instances its rules stop applying to. The page header has Import and Create rule
+set. Import shows the file's rule count and an editable name, and creates an
+unattached set.
 
 ## Charts, data and states
 

@@ -28,6 +28,8 @@ restrict origins to loopback or private IPv4 addresses. Deployment uses HTTPS.
 | `/api/rules`                           | GET, POST   | List or create a rule                      |
 | `/api/rules/:id`                       | PUT, DELETE | Edit or remove a rule                      |
 | `/api/rules/:id/renew`                 | POST        | Explicit renewed duration                  |
+| `/api/rule-sets`                       | POST        | Create a rule set                          |
+| `/api/rule-sets/:id`                   | PUT, DELETE | Rename, attach, detach, or delete a set    |
 | `/api/instances`                       | GET, POST   | List or create registered instances        |
 | `/api/instances/:id`                   | PUT, DELETE | Edit or remove an instance and its rules   |
 | `/api/settings`                        | GET, PUT    | Settings and resource usage                |
@@ -40,8 +42,8 @@ restrict origins to loopback or private IPv4 addresses. Deployment uses HTTPS.
 | `/api/requests/hosts/:address/restore` | POST        | Ask for review of a dismissed host again   |
 | `/api/history`                         | GET         | Retained audit, observations, health       |
 
-Rules, instances, and settings mutations require `expectedRevision`. A stale
-revision returns 409, so a retried create whose first attempt succeeded is
+Rule, rule set, instance, and settings mutations require `expectedRevision`. A
+stale revision returns 409, so a retried create whose first attempt succeeded is
 refused rather than repeated. Rule and instance input exclude server-owned
 identity, and rule input excludes creation/modification times; editing a rule or
 instance that no longer exists returns 404. Unknown fields and invalid
@@ -53,8 +55,30 @@ return 202 and remain pending until the gateway confirms the new policy hash.
 Responses include the new revision except for instance removal, which returns
 `{ "accepted": true }`.
 
-Removing an instance also removes its scoped rules and pending request rows;
-retained history remains available.
+Removing an instance also removes its scoped rules and pending request rows, and
+detaches it from every rule set; retained history remains available.
+
+A rule's `subject` is `{ "kind": "global" }`,
+`{ "kind": "instance", "instanceId" }`, `{ "kind": "address", "value" }`, or
+`{ "kind": "ruleSet", "ruleSetId" }`. Rules in a rule set are created, edited,
+and deleted through the rule endpoints like any other rule. The rules,
+instances, Requests, Monitor, and History reads include `ruleSets`, each with
+`id`, `name`, and `members`: `{ "kind": "global" }` for every instance, or
+`{ "kind": "instances", "instanceIds" }`, where an empty list is a set attached
+to nothing.
+
+Creating a rule set takes `ruleSet` (`name` and `members`), `rules`, and `move`.
+`rules` lists rules to create in the set, with the rule input fields except
+`subject`. `move` lists the IDs of existing rules that become the set's rules
+and keep their IDs; an unknown ID returns 404 `rule_not_found`. The response
+adds the new set's `id`. Updating takes `ruleSet` and replaces its name and
+members. Deleting a set deletes its rules. A set that no longer exists returns
+404 `rule_set_not_found`.
+
+An exported rule set file is
+`{ "format": "traffic-policy-rule-set", "version": 1, "name", "rules" }`, with
+`rules` as creation takes them. It carries no identities or members: the
+dashboard writes it from the rules read and imports it by creating a set.
 
 Settings reads include `catchAll`, the outgoing and incoming action of the
 permanent catch-all, each `null` when no such rule covers the direction. A
