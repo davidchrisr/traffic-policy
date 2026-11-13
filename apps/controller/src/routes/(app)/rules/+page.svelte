@@ -67,6 +67,7 @@
   }
 
   let deleting = $state<Rule | null>(null),
+    deleteRevision = $state(""),
     deleteBusy = $state(false),
     deleteError = $state("");
 
@@ -258,6 +259,7 @@
 
   function confirmDelete(rule: Rule) {
     deleting = rule;
+    deleteRevision = model.revision;
     deleteError = "";
   }
 
@@ -268,7 +270,7 @@
 
     try {
       await api(`rules/${deleting.id}`, "DELETE", {
-        expectedRevision: model.revision,
+        expectedRevision: deleteRevision,
       });
       deleting = null;
       selected = null;
