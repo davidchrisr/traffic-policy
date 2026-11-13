@@ -525,6 +525,10 @@ export function compileNftables(
   const permissions = reconcilePermissions(policy, livePermissions, now);
   const { nodes, ranges, roots } = policyNodes(scopeTree(policy));
   const dynamic = dnsChains(policy, permissions, options.marks, nodes);
+  const groups = new Map<string, DnsChain>();
+
+  for (const value of dynamic)
+    if (!groups.has(value.name)) groups.set(value.name, value);
 
   const {
     upstreamInterfaces,
@@ -645,10 +649,8 @@ export function compileNftables(
 
       for (const rule of rules) {
         if (rule.peer.kind === "hostname" || rule.peer.kind === "domain") {
-          const group = dynamic.find(
-            (value) =>
-              value.name ===
-              `l${node.family}_${direction[0]}_${node.name}_${compact(rule.id)}`,
+          const group = groups.get(
+            `l${node.family}_${direction[0]}_${node.name}_${compact(rule.id)}`,
           );
 
           if (!group) continue;
