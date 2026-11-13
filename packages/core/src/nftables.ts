@@ -82,7 +82,7 @@ export function policyNodes(tree: ScopeTree): PolicyNodes {
     let node = nodes.get(key);
 
     if (!node) {
-      const { ranks, instanceId } = entryContext(entry, key);
+      const { ranks, instanceId } = entryContext(tree, entry, key);
 
       node = {
         name: pathName(key),

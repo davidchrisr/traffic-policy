@@ -25,6 +25,7 @@ const policy = {
     { id: instanceId, name: "Current name", addresses: ["10.22.241.10"] },
   ],
   rules: [],
+  ruleSets: [],
   settings: { localNetworks: [] },
 };
 

@@ -57,6 +57,8 @@ export interface ScopeEntry extends NetworkRange {
   readonly network: string;
   readonly scope: string;
   readonly instanceId: string | null;
+  // The rule sets attached to the entry's instance; none on an address-rule entry.
+  readonly sets: readonly string[];
   readonly parent: ScopeEntry | null;
   readonly children: readonly ScopeEntry[];
 }
@@ -65,15 +67,29 @@ interface MutableEntry extends NetworkRange {
   network: string;
   scope: string;
   instanceId: string | null;
+  sets: readonly string[];
   parent: MutableEntry | null;
   children: MutableEntry[];
 }
 
+// A rule set as the tree reads it.
+export interface ScopeRuleSet {
+  readonly id: string;
+  readonly members:
+    | { readonly kind: "global" }
+    | { readonly kind: "instances"; readonly instanceIds: readonly string[] };
+}
+
+const NO_SETS: readonly string[] = [];
+
 // Instance addresses and address-rule subjects. CIDRs either nest or are disjoint, so the entries
 // form a tree: an address belongs to every entry on the path from its root entry to its most
-// specific one.
+// specific one. Rule sets are no part of the tree's shape: each entry lists the sets attached to
+// its instance, and paths and their keys stay the same whatever is attached.
 export class ScopeTree {
   readonly entries: readonly ScopeEntry[];
+  // The rule sets attached to every instance.
+  readonly universal: readonly string[];
   // Validation problems; a policy with any is rejected.
   readonly problems: readonly string[];
   private readonly families: Record<4 | 6, MutableEntry[]> = { 4: [], 6: [] };
@@ -81,9 +97,24 @@ export class ScopeTree {
   constructor(
     instances: readonly { id: string; addresses: readonly string[] }[],
     addresses: Iterable<string> = [],
+    ruleSets: readonly ScopeRuleSet[] = [],
   ) {
     const problems = new Set<string>();
     const networks = new Map<string, MutableEntry>();
+    const attached = new Map<string, string[]>();
+
+    for (const { id, members } of ruleSets)
+      if (members.kind === "instances")
+        for (const instanceId of members.instanceIds) {
+          const sets = attached.get(instanceId);
+
+          if (sets) sets.push(id);
+          else attached.set(instanceId, [id]);
+        }
+
+    this.universal = ruleSets.flatMap(({ id, members }) =>
+      members.kind === "global" ? [id] : [],
+    );
 
     const add = (network: string, scope: string, instanceId: string | null) => {
       const entry: MutableEntry = {
@@ -91,6 +122,7 @@ export class ScopeTree {
         network,
         scope,
         instanceId,
+        sets: (instanceId && attached.get(instanceId)) || NO_SETS,
         parent: null,
         children: [],
       };
@@ -202,6 +234,24 @@ export class ScopeTree {
   // The most specific instance on the entry's path.
   static instanceOf(entry: ScopeEntry): string {
     return instanceAncestor(entry)!.instanceId!;
+  }
+
+  // Every scope whose rules apply at the entry: the scopes on its path and the rule sets attached
+  // to them or to every instance.
+  static scopes(tree: ScopeTree, entry: ScopeEntry): Set<string> {
+    const scopes = new Set(tree.universal);
+
+    for (
+      let current: ScopeEntry | null = entry;
+      current;
+      current = current.parent
+    ) {
+      scopes.add(current.scope);
+
+      for (const id of current.sets) scopes.add(id);
+    }
+
+    return scopes;
   }
 }
 

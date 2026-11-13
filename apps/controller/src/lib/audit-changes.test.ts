@@ -54,6 +54,7 @@ const policy = (rules: Rule[], dnsGraceSeconds = 7200): Policy =>
       { id: instanceId, name: "Client", addresses: ["10.22.241.10"] },
     ],
     rules: [...rules, catchAll],
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds,
@@ -111,9 +112,12 @@ describe("policy change details", () => {
       },
     ]);
 
-    const [update, settings] = describeChanges(changes, policy([]).instances, [
-      changed,
-    ]);
+    const [update, settings] = describeChanges(
+      changes,
+      policy([]).instances,
+      [],
+      [changed],
+    );
 
     expect(update!.title).toBe("Changed rule");
     expect(update!.rule).toEqual(changed);
@@ -143,6 +147,7 @@ describe("policy change details", () => {
     const [deleted] = describeChanges(
       policyChanges(policy([rule]), policy([])),
       policy([]).instances,
+      [],
       [],
     );
 
@@ -179,16 +184,105 @@ describe("policy change details", () => {
       describeChanges(
         policyChanges(subnet([before]), subnet([after])),
         subnet([]).instances,
+        [],
         [after],
       )[0]!.lines.map((line) => [line.label, line.before, line.after]);
 
     expect(scope(address, rule)).toEqual([
-      ["Instance", "10.22.241.10", "Client"],
+      ["Applies to", "10.22.241.10", "Client"],
     ]);
-    expect(scope(rule, global)).toEqual([["Instance", "Client", anyValue]]);
+    expect(scope(rule, global)).toEqual([["Applies to", "Client", anyValue]]);
     expect(
       scope(rule, { ...rule, peer: { kind: "gateway" } as const }),
     ).toEqual([["Peer", "10.22.242.99", gatewayValue]]);
+  });
+
+  it("describes rule set changes and names the set a rule belongs to", () => {
+    const ruleSetId = "44444444-4444-4444-8444-444444444444";
+
+    const withSets = (
+      rules: Rule[],
+      ruleSets: Policy["ruleSets"],
+      instances = policy([]).instances,
+    ) =>
+      policySchema.parse({
+        ...policy([]),
+        rules: [...rules, catchAll],
+        instances,
+        ruleSets,
+      });
+
+    const unattached = {
+      id: ruleSetId,
+      name: "Web",
+      members: { kind: "instances" as const, instanceIds: [] },
+    };
+
+    const attached = {
+      ...unattached,
+      name: "Web access",
+      members: { kind: "instances" as const, instanceIds: [instanceId] },
+    };
+
+    const moved = {
+      ...rule,
+      subject: { kind: "ruleSet", ruleSetId },
+    } satisfies Rule;
+
+    const describe = (before: Policy, after: Policy) =>
+      describeChanges(
+        policyChanges(before, after),
+        after.instances,
+        after.ruleSets,
+        after.rules,
+      ).map((view) => [
+        view.title,
+        view.lines.map((line) => [line.label, line.before, line.after]),
+      ]);
+
+    // Saving an instance's rule as a set adds the set and moves the rule.
+    expect(
+      describe(withSets([rule], []), withSets([moved], [attached])),
+    ).toEqual([
+      ["Added rule set: Web access", [["Attached to", null, "Client"]]],
+      ["Changed rule", [["Applies to", "Client", "Web access"]]],
+    ]);
+    expect(
+      describe(withSets([], [unattached]), withSets([], [attached])),
+    ).toEqual([
+      [
+        "Changed rule set: Web access",
+        [
+          ["Name", "Web", "Web access"],
+          ["Attached to", "None", "Client"],
+        ],
+      ],
+    ]);
+    expect(
+      describe(
+        withSets([], [attached]),
+        withSets([], [{ ...attached, members: { kind: "global" } }]),
+      ),
+    ).toEqual([
+      // An update records its changed fields only; the entry itself names the set.
+      ["Changed rule set", [["Attached to", "Client", anyValue]]],
+    ]);
+
+    // Deleting a set deletes its rules; removing an instance detaches it.
+    expect(
+      describe(withSets([moved], [attached]), withSets([], [])).map(
+        ([title]) => title,
+      ),
+    ).toEqual(["Deleted rule set: Web access", "Deleted Allow rule"]);
+    expect(
+      describe(
+        withSets([], [attached]),
+        withSets([], [{ ...attached, members: unattached.members }], []),
+      ),
+    ).toEqual([
+      ["Removed instance: Client", [["Addresses", "10.22.241.10", null]]],
+      ["Changed rule set", [["Attached to", "Removed instance", "None"]]],
+    ]);
   });
 
   it("records nothing when only bookkeeping changed", () => {

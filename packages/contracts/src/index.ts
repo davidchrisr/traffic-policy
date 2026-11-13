@@ -187,7 +187,7 @@ export const instanceAddressSchema = z
   .transform(canonicalAddress);
 
 // Who a rule applies to: every instance, one instance with every network nested in its
-// addresses, or an address range inside an instance.
+// addresses, an address range inside an instance, or the instances a rule set is attached to.
 export const subjectSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("global") }).strict(),
   z
@@ -196,17 +196,26 @@ export const subjectSchema = z.discriminatedUnion("kind", [
   z
     .object({ kind: z.literal("address"), value: instanceAddressSchema })
     .strict(),
+  z
+    .object({ kind: z.literal("ruleSet"), ruleSetId: z.string().uuid() })
+    .strict(),
 ]);
 
 export type Subject = z.infer<typeof subjectSchema>;
 
-// The scope a subject names: an instance ID or an address range; null for global rules.
+// The scope a subject names: an instance ID, an address range, or a rule set ID; null for global
+// rules.
 export function subjectScope(subject: Subject): string | null {
-  return subject.kind === "global"
-    ? null
-    : subject.kind === "instance"
-      ? subject.instanceId
-      : subject.value;
+  switch (subject.kind) {
+    case "global":
+      return null;
+    case "instance":
+      return subject.instanceId;
+    case "address":
+      return subject.value;
+    case "ruleSet":
+      return subject.ruleSetId;
+  }
 }
 
 // A `ScopeTree.pathKey`: an address family, then each scope from the root with its prefix length.
@@ -337,7 +346,13 @@ const ruleObject = z
   })
   .strict();
 
-export const ruleSchema = ruleObject.superRefine((rule, context) => {
+// The fields a rule and an exported rule share.
+type RuleFields = Omit<
+  z.infer<typeof ruleObject>,
+  "id" | "subject" | "createdAt" | "modifiedAt"
+>;
+
+function checkRule(rule: RuleFields, context: z.RefinementCtx<RuleFields>) {
   const fail = (message: string, path: string) =>
     context.addIssue({ code: "custom", message, path: [path] });
 
@@ -382,10 +397,57 @@ export const ruleSchema = ruleObject.superRefine((rule, context) => {
   ) {
     fail("Expiry must follow activation", "expiresAt");
   }
-});
+}
+
+export const ruleSchema = ruleObject.superRefine(checkRule);
 
 export const ruleInputSchema = ruleObject
   .omit({ id: true, createdAt: true, modifiedAt: true })
+  .strict();
+
+export const MAX_RULE_SETS = 256;
+
+// The instances a rule set is attached to: every instance, or the listed ones.
+export const ruleSetMembersSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("global") }).strict(),
+  z
+    .object({
+      kind: z.literal("instances"),
+      instanceIds: z.array(z.string().uuid()).max(4096),
+    })
+    .strict(),
+]);
+
+const ruleSetFields = {
+  name: z.string().trim().min(1).max(128),
+  members: ruleSetMembersSchema,
+};
+
+// A rule set as Admin submits it; the controller assigns its identity.
+export const ruleSetInputSchema = z.object(ruleSetFields).strict();
+
+// A named list of rules: the rules naming it as their subject apply to the instances it is
+// attached to, with every network nested in their addresses.
+export const ruleSetSchema = z
+  .object({ id: z.string().uuid(), ...ruleSetFields })
+  .strict();
+
+// A rule set as exported to a file: its name and rules, without identities, members, or
+// bookkeeping. Importing it creates a new rule set.
+export const ruleSetFileSchema = z
+  .object({
+    format: z.literal("traffic-policy-rule-set"),
+    version: z.literal(1),
+    name: ruleSetFields.name,
+    rules: z
+      .array(
+        ruleObject
+          .omit({ id: true, subject: true, createdAt: true, modifiedAt: true })
+          .strict()
+          .superRefine(checkRule),
+      )
+      .max(4096),
+  })
   .strict();
 
 // Each kind of observation history is trimmed to its own limit; together they bound history.
@@ -471,6 +533,7 @@ export const policySchema = z
     generatedAt: instantSchema,
     instances: z.array(instanceSchema).max(4096),
     rules: z.array(ruleSchema).max(4096),
+    ruleSets: z.array(ruleSetSchema).max(MAX_RULE_SETS),
     settings: settingsSchema,
   })
   .strict()
@@ -488,11 +551,31 @@ export const policySchema = z
     )
       fail("Duplicate rule identity");
 
+    const sets = new Set(policy.ruleSets.map((value) => value.id));
+
+    if (sets.size !== policy.ruleSets.length)
+      fail("Duplicate rule set identity");
+
+    // A scope is named by its ID alone, so no rule set may share an instance's.
+    if (policy.ruleSets.some((value) => identities.has(value.id)))
+      fail("A rule set and an instance share an identity");
+
+    for (const { members } of policy.ruleSets) {
+      if (members.kind !== "instances") continue;
+
+      if (new Set(members.instanceIds).size !== members.instanceIds.length)
+        fail("A rule set lists an instance twice");
+
+      if (members.instanceIds.some((id) => !identities.has(id)))
+        fail("Rule set references an unknown instance");
+    }
+
     const tree = new ScopeTree(
       policy.instances,
       policy.rules.flatMap((rule) =>
         rule.subject.kind === "address" ? [rule.subject.value] : [],
       ),
+      policy.ruleSets,
     );
 
     for (const problem of tree.problems) fail(problem);
@@ -503,6 +586,9 @@ export const policySchema = z
         !identities.has(rule.subject.instanceId)
       )
         fail("Rule references an unknown instance");
+
+      if (rule.subject.kind === "ruleSet" && !sets.has(rule.subject.ruleSetId))
+        fail("Rule references an unknown rule set");
     }
 
     if (compiledRuleCount(policy, tree) > 50000)
@@ -529,7 +615,8 @@ export const policySchema = z
   });
 
 // The rule entries the enforcement chains hold: each distinct path of scopes gets its own chains,
-// holding the global rules and the rules of every scope on the path.
+// holding the global rules, the rules of every scope on the path, and the rules of every rule set
+// attached there.
 function compiledRuleCount(
   policy: Pick<Policy, "rules">,
   tree: ScopeTree,
@@ -548,8 +635,8 @@ function compiledRuleCount(
   for (const entry of tree.entries)
     paths.set(
       ScopeTree.pathKey(entry),
-      ScopeTree.path(entry).reduce(
-        (sum, value) => sum + (counts.get(value.scope) ?? 0),
+      [...ScopeTree.scopes(tree, entry)].reduce(
+        (sum, scope) => sum + (counts.get(scope) ?? 0),
         global,
       ),
     );
@@ -836,6 +923,12 @@ export const eventBatchSchema = z
 export type Peer = z.infer<typeof peerSchema>;
 
 export type Rule = z.infer<typeof ruleSchema>;
+
+export type RuleSet = z.infer<typeof ruleSetSchema>;
+
+export type RuleSetMembers = z.infer<typeof ruleSetMembersSchema>;
+
+export type RuleSetFile = z.infer<typeof ruleSetFileSchema>;
 
 export type Instance = z.infer<typeof instanceSchema>;
 

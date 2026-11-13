@@ -3,10 +3,12 @@ import {
   peerSchema,
   portsSchema,
   ruleSchema,
+  ruleSetMembersSchema,
   settingsSchema,
   subjectSchema,
   type Instance,
   type Rule,
+  type RuleSet,
 } from "@traffic-policy/contracts";
 import type { AuditChange } from "@traffic-policy/contracts/dashboard";
 import {
@@ -42,9 +44,15 @@ export interface ChangeView {
   lines: ChangeLine[];
 }
 
+// The instances and rule sets that turn the identities in a change into names.
+interface Names {
+  instances: Instance[];
+  ruleSets: RuleSet[];
+}
+
 interface Field {
   label: string;
-  format: (value: Value | undefined, instances: Instance[]) => ChangeValue;
+  format: (value: Value | undefined, names: Names) => ChangeValue;
 }
 
 const optionalText = z.string().nullable();
@@ -57,16 +65,22 @@ const deadline = (empty: string) => (value: Value | undefined) => {
 
 const ruleFields = {
   subject: {
-    label: "Instance",
-    format: (value, instances) => {
+    label: "Applies to",
+    format: (value, { instances, ruleSets }) => {
       const subject = subjectSchema.parse(value);
 
       if (subject.kind === "global") return anyValue;
 
-      return subject.kind === "instance" &&
+      if (
+        subject.kind === "instance" &&
         !instances.some((instance) => instance.id === subject.instanceId)
-        ? "Removed instance"
-        : subjectLabel(subject, instances);
+      )
+        return "Removed instance";
+
+      return subject.kind === "ruleSet" &&
+        !ruleSets.some((ruleSet) => ruleSet.id === subject.ruleSetId)
+        ? "Deleted rule set"
+        : subjectLabel(subject, instances, ruleSets);
     },
   },
   direction: {
@@ -132,6 +146,28 @@ const instanceFields = {
   addresses: {
     label: "Addresses",
     format: (value) => z.array(z.string()).parse(value).join(", "),
+  },
+} satisfies Record<string, Field>;
+
+const ruleSetFields = {
+  name: { label: "Name", format: (value) => z.string().parse(value) },
+  members: {
+    label: "Attached to",
+    format: (value, { instances }) => {
+      const members = ruleSetMembersSchema.parse(value);
+
+      if (members.kind === "global") return anyValue;
+
+      return (
+        members.instanceIds
+          .map(
+            (id) =>
+              instances.find((instance) => instance.id === id)?.name ??
+              "Removed instance",
+          )
+          .join(", ") || "None"
+      );
+    },
   },
 } satisfies Record<string, Field>;
 
@@ -211,11 +247,11 @@ const RULE_EXTRAS = {
 function lines(
   change: AuditChange,
   fields: Record<string, Field>,
-  instances: Instance[],
+  names: Names,
   keys: string[],
 ): ChangeLine[] {
   const side = (values: Fields | null, key: string, format: Field["format"]) =>
-    values ? format(values[key], instances) : null;
+    values ? format(values[key], names) : null;
 
   return keys.flatMap((key) => {
     if (key === "protocol")
@@ -243,7 +279,7 @@ function lines(
 
 function ruleView(
   change: AuditChange,
-  instances: Instance[],
+  names: Names,
   rules: Rule[],
 ): ChangeView {
   const whole =
@@ -262,7 +298,7 @@ function ruleView(
       lines: lines(
         change,
         ruleFields,
-        instances,
+        names,
         Object.entries(RULE_EXTRAS)
           .filter(
             ([key, value]) =>
@@ -281,27 +317,35 @@ function ruleView(
     lines: lines(
       change,
       ruleFields,
-      instances,
+      names,
       RULE_ORDER.filter((key) => change.after && key in change.after),
     ),
   };
 }
 
-function instanceView(change: AuditChange): ChangeView {
+// A named object's change: every changed field of an update, and `whole` for one added or removed.
+function namedView(
+  change: AuditChange,
+  kind: string,
+  removed: string,
+  fields: Record<string, Field>,
+  names: Names,
+  whole: string[],
+): ChangeView {
   const name = z
     .string()
     .optional()
     .parse((change.after ?? change.before)?.name);
 
-  const verb = !change.before ? "Added" : !change.after ? "Removed" : "Changed";
+  const verb = !change.before ? "Added" : !change.after ? removed : "Changed";
 
   return {
-    title: `${verb} instance${name ? `: ${name}` : ""}`,
+    title: `${verb} ${kind}${name ? `: ${name}` : ""}`,
     lines: lines(
       change,
-      instanceFields,
-      [],
-      change.before && change.after ? Object.keys(change.after) : ["addresses"],
+      fields,
+      names,
+      change.before && change.after ? Object.keys(change.after) : whole,
     ),
   };
 }
@@ -310,19 +354,30 @@ function instanceView(change: AuditChange): ChangeView {
 export function describeChanges(
   changes: AuditChange[],
   instances: Instance[],
+  ruleSets: RuleSet[],
   rules: Rule[],
 ): ChangeView[] {
-  return changes.map((change) => {
-    if (change.subject === "rule") return ruleView(change, instances, rules);
+  const names = { instances, ruleSets };
 
-    if (change.subject === "instance") return instanceView(change);
+  return changes.map((change) => {
+    if (change.subject === "rule") return ruleView(change, names, rules);
+
+    if (change.subject === "instance")
+      return namedView(change, "instance", "Removed", instanceFields, names, [
+        "addresses",
+      ]);
+
+    if (change.subject === "ruleSet")
+      return namedView(change, "rule set", "Deleted", ruleSetFields, names, [
+        "members",
+      ]);
 
     return {
       title: "Changed settings",
       lines: lines(
         change,
         settingsFields,
-        instances,
+        names,
         Object.keys(change.after ?? {}),
       ),
     };

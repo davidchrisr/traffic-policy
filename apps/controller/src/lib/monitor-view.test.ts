@@ -49,6 +49,7 @@ function snapshot(services: MonitorService[] = [service]): MonitorSnapshot {
     eventSummary: null,
     reviews: [],
     rules: [],
+    ruleSets: [],
     localNetworks: [],
     unregistered: {
       clientPackets: "0",

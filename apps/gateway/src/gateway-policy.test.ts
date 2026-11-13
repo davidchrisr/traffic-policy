@@ -76,6 +76,7 @@ function policy(): Policy {
         reason: "",
       },
     ],
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,

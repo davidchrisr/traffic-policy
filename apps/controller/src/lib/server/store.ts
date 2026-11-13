@@ -467,6 +467,7 @@ export class ControllerStore {
           generatedAt: now,
           instances: [],
           rules: [catchall],
+          ruleSets: [],
           settings,
         });
 
@@ -2033,7 +2034,7 @@ export class ControllerStore {
       rules: [...policy.rules].sort(compareRules).map((rule) => ({
         ...rule,
         state: ruleState(rule),
-        description: describeRule(rule, policy.instances),
+        description: describeRule(rule, policy.instances, policy.ruleSets),
         blocked:
           rule.action === "block"
             ? {
@@ -2042,6 +2043,7 @@ export class ControllerStore {
               }
             : null,
       })),
+      ruleSets: policy.ruleSets,
       status: this.status(),
     });
   }
@@ -2256,6 +2258,20 @@ export class ControllerStore {
         policy.rules = policy.rules.filter(
           (rule) =>
             rule.subject.kind !== "instance" || rule.subject.instanceId !== id,
+        );
+
+        policy.ruleSets = policy.ruleSets.map((value) =>
+          value.members.kind === "instances"
+            ? {
+                ...value,
+                members: {
+                  kind: "instances",
+                  instanceIds: value.members.instanceIds.filter(
+                    (instanceId) => instanceId !== id,
+                  ),
+                },
+              }
+            : value,
         );
         this.database
           .prepare("DELETE FROM requests WHERE instance_id=?")

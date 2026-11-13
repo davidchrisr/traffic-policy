@@ -1,12 +1,23 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { page } from "$app/state";
-  import { Plus, Check, Ban, Pencil, RefreshCw, Trash2 } from "@lucide/svelte";
+  import { SvelteSet } from "svelte/reactivity";
+  import {
+    Plus,
+    Check,
+    Ban,
+    ChevronRight,
+    Ellipsis,
+    Pencil,
+    RefreshCw,
+    Trash2,
+  } from "@lucide/svelte";
   import type { PageProps } from "./$types";
   import {
     ScopeTree,
     subjectScope,
     type Rule,
+    type RuleSet,
   } from "@traffic-policy/contracts";
   import { policyTree } from "#lib/rule-state.ts";
   import { rulesSnapshotSchema } from "@traffic-policy/contracts/dashboard";
@@ -18,6 +29,7 @@
     subjectPath,
   } from "@traffic-policy/core";
   import { api, failureMessage } from "#lib/client.ts";
+  import { attach, detach, isAttached } from "#lib/rule-sets.ts";
   import { currentTime } from "#lib/clock.ts";
   import { formatInstantInSentence } from "#lib/format-time.ts";
   import { Button } from "#lib/components/ui/button/index.ts";
@@ -26,12 +38,14 @@
   import DateTimeField from "#lib/components/DateTimeField.svelte";
   import { nextDay, nextQuarterHour } from "#lib/date-picking.ts";
   import RuleEditor from "#lib/components/RuleEditor.svelte";
+  import RuleSetNameDialog from "#lib/components/RuleSetNameDialog.svelte";
   import InspectorPanel from "#lib/components/InspectorPanel.svelte";
   import StatusLine from "#lib/components/StatusLine.svelte";
   import Time from "#lib/components/Time.svelte";
   import BuiltInValue from "#lib/components/BuiltInValue.svelte";
   import RuleLabel from "#lib/components/RuleLabel.svelte";
   import * as Dialog from "#lib/components/ui/dialog/index.ts";
+  import * as DropdownMenu from "#lib/components/ui/dropdown-menu/index.ts";
 
   let { data }: PageProps = $props();
 
@@ -45,7 +59,8 @@
     editorOpen = $state(false),
     editing = $state<Rule | null>(null),
     refreshError = $state(""),
-    actionError = $state("");
+    actionError = $state(""),
+    attachError = $state("");
 
   // Renewal reuses the editor's lifetimes; a custom end is sent as seconds from now.
   const renewOptions = [
@@ -91,16 +106,37 @@
       ),
   );
 
+  const filtering = $derived(search !== "" || filter !== "all");
+
+  // The instance whose rules become a rule set, awaiting the set's name. `tied` when it has other
+  // rule sets, which the moved rules stop outranking.
+  let saving = $state<{
+      id: string;
+      name: string;
+      rules: Rule[];
+      revision: string;
+      tied: boolean;
+    } | null>(null),
+    savingOpen = $state(false);
+
+  // The attached rule sets whose rules are listed, as "<group>|<rule set>".
+  const expanded = new SvelteSet<string>();
+
   // Global rules, each instance's, and each address rule's range with the instance holding it.
+  // Any and each instance also list the rule sets attached to them.
   const groups = $derived.by(() => {
-    const tree = policyTree(model.instances, model.rules);
+    const tree = policyTree(model.instances, model.rules, model.ruleSets);
 
     // The tree holds one entry per address-rule range.
     const addresses = tree.entries.filter((entry) => !entry.instanceId);
 
+    const scoped = (scope: string | null) =>
+      shown.filter((rule) => subjectScope(rule.subject) === scope);
+
     return [
-      { id: null, name: "Any", path: null },
+      { kind: "any" as const, id: null, name: "Any", path: null },
       ...model.instances.map((instance) => ({
+        kind: "instance" as const,
         id: instance.id,
         name: instance.name,
         path: subjectPath(
@@ -115,6 +151,7 @@
         );
 
         return {
+          kind: "address" as const,
           id: entry.network,
           name: holder ? `${entry.network} in ${holder.name}` : entry.network,
           path: subjectPath(
@@ -125,13 +162,42 @@
         };
       }),
     ].flatMap((group) => {
-      const rules = shown.filter(
-        (rule) => subjectScope(rule.subject) === group.id,
-      );
+      const rules = scoped(group.id);
 
-      return rules.length ? [{ ...group, rules }] : [];
+      // A filter hides the attached rule sets it leaves empty.
+      const sets =
+        group.kind === "address"
+          ? []
+          : model.ruleSets.flatMap((ruleSet) => {
+              if (!isAttached(ruleSet.members, group.id)) return [];
+              const matches = scoped(ruleSet.id);
+
+              return matches.length || !filtering
+                ? [{ ruleSet, rules: matches }]
+                : [];
+            });
+
+      return rules.length || sets.length ? [{ ...group, rules, sets }] : [];
     });
   });
+
+  // The rule sets an instance could still attach.
+  const attachable = (instanceId: string) =>
+    model.ruleSets.filter(
+      (ruleSet) =>
+        ruleSet.members.kind === "instances" &&
+        !isAttached(ruleSet.members, instanceId),
+    );
+
+  // The instance's permanent rules, which Save as rule set moves.
+  const permanent = (instanceId: string) =>
+    model.rules.filter(
+      (rule) =>
+        rule.subject.kind === "instance" &&
+        rule.subject.instanceId === instanceId &&
+        rule.notBefore === null &&
+        rule.expiresAt === null,
+    );
 
   const catchAllNote = "Applies when no rule matches. Set in Settings.";
 
@@ -143,6 +209,7 @@
           rule,
           model.rules,
           model.instances,
+          model.ruleSets,
           currentTime().getTime(),
         );
 
@@ -155,7 +222,7 @@
               state: found.until
                 ? `No effect, takes effect ${formatInstantInSentence(found.until, currentTime())}`
                 : "No effect",
-              reason: `${found.rule.action === "allow" ? "Allow" : "Block"} ${describeRule(found.rule, model.instances)} matches the same traffic and wins.`,
+              reason: `${found.rule.action === "allow" ? "Allow" : "Block"} ${describeRule(found.rule, model.instances, model.ruleSets)} matches the same traffic and wins.`,
               winner: found.rule,
             },
           ],
@@ -257,6 +324,36 @@
     }
   }
 
+  async function setMembers(ruleSet: RuleSet, members: RuleSet["members"]) {
+    attachError = "";
+
+    try {
+      await api(`rule-sets/${ruleSet.id}`, "PUT", {
+        expectedRevision: model.revision,
+        ruleSet: { name: ruleSet.name, members },
+      });
+    } catch (failure) {
+      attachError = failureMessage(failure, "Rule set could not be changed");
+    }
+
+    await refresh();
+  }
+
+  async function saveAsSet(name: string) {
+    if (!saving) return;
+
+    await api("rule-sets", "POST", {
+      expectedRevision: saving.revision,
+      ruleSet: {
+        name,
+        members: { kind: "instances", instanceIds: [saving.id] },
+      },
+      rules: [],
+      move: saving.rules.map((rule) => rule.id),
+    });
+    await refresh();
+  }
+
   function confirmDelete(rule: Rule) {
     deleting = rule;
     deleteRevision = model.revision;
@@ -309,6 +406,56 @@
   }
 </script>
 
+{#snippet ruleRow(rule: (typeof shown)[number], nested: boolean)}
+  {@const fromSettings = isSettingsCatchAll(rule)}
+  {@const override = overrides.get(rule.id)}
+  <div
+    id={nested ? undefined : `rule-${rule.id}`}
+    class={["list-row", nested && "pl-8"]}
+    data-selected={selected === rule.id}
+    data-inactive={rule.state !== "active" || override !== undefined}
+    data-settings={fromSettings}
+  >
+    <button
+      class="flex min-w-0 flex-1 items-center gap-3 text-left"
+      title={fromSettings ? catchAllNote : override?.reason}
+      onclick={() => {
+        select(rule);
+        inspectorOpen = true;
+      }}
+    >
+      {#if rule.action === "allow"}<Check
+          size={18}
+          class="text-allow rule-row-dim shrink-0"
+          aria-hidden="true"
+        />{:else}<Ban
+          size={18}
+          class="text-destructive rule-row-dim shrink-0"
+          aria-hidden="true"
+        />{/if}
+      <span class="min-w-0"
+        ><span class="sr-only"
+          >{rule.action === "allow" ? "Allow" : "Block"}
+        </span><span class="rule-row-dim"><RuleLabel {rule} /></span
+        >{#if rule.state !== "active"}<span
+            class="rule-row-state block text-xs capitalize">{rule.state}</span
+          >{:else if override}<span class="rule-row-state block text-xs"
+            >{override.state}</span
+          ><span class="sr-only">{` ${override.reason}`}</span
+          >{/if}{#if fromSettings}<span class="sr-only"
+            >{` ${catchAllNote}`}</span
+          >{/if}</span
+      >
+    </button>
+    {#if !fromSettings}<Button
+        variant="ghost"
+        size="icon"
+        aria-label={`Edit ${rule.description}`}
+        onclick={() => edit(rule)}><Pencil size={15} /></Button
+      >{/if}
+  </div>
+{/snippet}
+
 <svelte:head><title>Rules · Traffic Policy</title></svelte:head>
 <header class="page-header">
   <h1 class="page-title">Rules</h1>
@@ -360,67 +507,115 @@
     {#if refreshError}<p class="field-error mb-4" role="alert">
         {refreshError}
       </p>{/if}
+    {#if attachError}<p class="field-error mb-4" role="alert">
+        {attachError}
+      </p>{/if}
     {#each groups as group (group.id)}<section class="mb-5">
-        <h2 class="section-title mb-2">
-          {#if group.id === null}<BuiltInValue kind="any" />{:else}<span
-              title={group.path ?? undefined}>{group.name}</span
-            >{/if}{#if group.path}<span class="sr-only"
-              >{` (${group.path.replaceAll("\n", "; ")})`}</span
-            >{/if}<span
-            class="muted ml-2 text-xs font-normal"
-            aria-hidden="true">{group.rules.length}</span
-          ><span class="sr-only"
-            >{`, ${group.rules.length} ${group.rules.length === 1 ? "rule" : "rules"}`}</span
-          >
-        </h2>
-        {#each group.rules as rule (rule.id)}{@const fromSettings =
-            isSettingsCatchAll(rule)}{@const override = overrides.get(rule.id)}
-          <div
-            id={`rule-${rule.id}`}
-            class="list-row"
-            data-selected={selected === rule.id}
-            data-inactive={rule.state !== "active" || override !== undefined}
-            data-settings={fromSettings}
-          >
+        <div class="mb-2 flex min-h-9 items-center gap-2">
+          <h2 class="section-title min-w-0 flex-1">
+            {#if group.id === null}<BuiltInValue kind="any" />{:else}<span
+                title={group.path ?? undefined}>{group.name}</span
+              >{/if}{#if group.path}<span class="sr-only"
+                >{` (${group.path.replaceAll("\n", "; ")})`}</span
+              >{/if}<span
+              class="muted ml-2 text-xs font-normal"
+              aria-hidden="true">{group.rules.length}</span
+            ><span class="sr-only"
+              >{`, ${group.rules.length} ${group.rules.length === 1 ? "rule" : "rules"}`}</span
+            >
+          </h2>
+          {#if group.kind === "instance"}{@const candidates = attachable(
+              group.id,
+            )}{@const movable = permanent(group.id)}
+            {#if candidates.length || movable.length}<DropdownMenu.Root>
+                <DropdownMenu.Trigger>
+                  {#snippet child({ props })}<Button
+                      {...props}
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Rule sets for ${group.name}`}
+                      ><Ellipsis size={16} /></Button
+                    >{/snippet}
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content align="end">
+                  {#if candidates.length}<DropdownMenu.Group>
+                      <DropdownMenu.GroupHeading
+                        >Attach rule set</DropdownMenu.GroupHeading
+                      >
+                      {#each candidates as ruleSet (ruleSet.id)}<DropdownMenu.Item
+                          onSelect={() =>
+                            setMembers(
+                              ruleSet,
+                              attach(ruleSet.members, group.id),
+                            )}>{ruleSet.name}</DropdownMenu.Item
+                        >{/each}
+                    </DropdownMenu.Group>{/if}
+                  {#if candidates.length && movable.length}<DropdownMenu.Separator
+                    />{/if}
+                  {#if movable.length}<DropdownMenu.Item
+                      onSelect={() => {
+                        saving = {
+                          id: group.id,
+                          name: group.name,
+                          rules: movable,
+                          revision: model.revision,
+                          tied: model.ruleSets.some((ruleSet) =>
+                            isAttached(ruleSet.members, group.id),
+                          ),
+                        };
+                        savingOpen = true;
+                      }}>Save as rule set</DropdownMenu.Item
+                    >{/if}
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>{/if}{/if}
+        </div>
+        {#each group.rules as rule (rule.id)}{@render ruleRow(
+            rule,
+            false,
+          )}{/each}
+        {#each group.sets as { ruleSet, rules } (ruleSet.id)}{@const key = `${group.id}|${ruleSet.id}`}{@const open =
+            filtering || expanded.has(key)}
+          <div class="list-row">
             <button
               class="flex min-w-0 flex-1 items-center gap-3 text-left"
-              title={fromSettings ? catchAllNote : override?.reason}
+              aria-expanded={open}
+              disabled={filtering}
               onclick={() => {
-                select(rule);
-                inspectorOpen = true;
+                if (!expanded.delete(key)) expanded.add(key);
               }}
-            >
-              {#if rule.action === "allow"}<Check
-                  size={18}
-                  class="text-allow rule-row-dim shrink-0"
-                  aria-hidden="true"
-                />{:else}<Ban
-                  size={18}
-                  class="text-destructive rule-row-dim shrink-0"
-                  aria-hidden="true"
-                />{/if}
-              <span class="min-w-0"
+              ><ChevronRight
+                size={18}
+                class={[
+                  "muted shrink-0 transition-transform",
+                  open && "rotate-90",
+                ]}
+                aria-hidden="true"
+              /><span class="min-w-0 break-words"
+                >From {ruleSet.name}<span
+                  class="muted ml-2 text-xs"
+                  aria-hidden="true">{rules.length}</span
                 ><span class="sr-only"
-                  >{rule.action === "allow" ? "Allow" : "Block"}
-                </span><span class="rule-row-dim"><RuleLabel {rule} /></span
-                >{#if rule.state !== "active"}<span
-                    class="rule-row-state block text-xs capitalize"
-                    >{rule.state}</span
-                  >{:else if override}<span class="rule-row-state block text-xs"
-                    >{override.state}</span
-                  ><span class="sr-only">{` ${override.reason}`}</span
-                  >{/if}{#if fromSettings}<span class="sr-only"
-                    >{` ${catchAllNote}`}</span
-                  >{/if}</span
-              >
-            </button>
-            {#if !fromSettings}<Button
-                variant="ghost"
-                size="icon"
-                aria-label={`Edit ${rule.description}`}
-                onclick={() => edit(rule)}><Pencil size={15} /></Button
-              >{/if}
-          </div>{/each}
+                  >{`, ${rules.length} ${rules.length === 1 ? "rule" : "rules"}`}</span
+                ></span
+              ></button
+            ><Button
+              variant="ghost"
+              size="icon"
+              href={`/rule-sets?set=${ruleSet.id}`}
+              aria-label={`Edit ${ruleSet.name}`}><Pencil size={15} /></Button
+            ><Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Detach ${ruleSet.name} from ${group.name}`}
+              onclick={() =>
+                setMembers(ruleSet, detach(ruleSet.members, group.id))}
+              >Detach</Button
+            >
+          </div>
+          {#if open}{#each rules as rule (rule.id)}{@render ruleRow(
+                rule,
+                true,
+              )}{/each}{/if}{/each}
       </section>{/each}
     {#if !groups.length}<div class="empty-state">
         No rules match these filters.
@@ -429,7 +624,11 @@
   <InspectorPanel label="Rule inspector" bind:open={inspectorOpen}>
     {#if focused}<h2 class="section-title mb-4">Selected rule</h2>
       <p class="break-words">
-        <RuleLabel rule={focused} instances={model.instances} />
+        <RuleLabel
+          rule={focused}
+          instances={model.instances}
+          ruleSets={model.ruleSets}
+        />
       </p>
       <dl class="mt-4 space-y-3">
         <div>
@@ -455,6 +654,7 @@
               <RuleLabel
                 rule={focusedOverride.winner}
                 instances={model.instances}
+                ruleSets={model.ruleSets}
               /> matches the same traffic and wins.
             </dd>{:else}<dd class="capitalize">{focused.state}</dd>{/if}
         </div>
@@ -523,9 +723,20 @@
   bind:open={editorOpen}
   rule={editing}
   instances={model.instances}
+  ruleSets={model.ruleSets}
   rules={model.rules}
   revision={model.revision}
   onSaved={() => refresh()}
+/>
+<RuleSetNameDialog
+  bind:open={savingOpen}
+  title="Save as rule set"
+  description={saving
+    ? `${saving.rules.length} permanent ${saving.rules.length === 1 ? "rule moves to the set and ranks" : "rules move to the set and rank"} below the rules ${saving.name} keeps${saving.tied ? " and no longer above its other rule sets" : ""}.`
+    : null}
+  initial={saving?.name ?? ""}
+  action="Save"
+  onSubmit={saveAsSet}
 />
 <Dialog.Root
   open={deleting !== null}
@@ -558,7 +769,11 @@
             aria-hidden="true"
           />{/if}<span class="sr-only"
           >{deleting.action === "allow" ? "Allow" : "Block"}
-        </span><RuleLabel rule={deleting} instances={model.instances} />
+        </span><RuleLabel
+          rule={deleting}
+          instances={model.instances}
+          ruleSets={model.ruleSets}
+        />
       </p>{/if}
     {#if deleteError}<p class="field-error" role="alert">
         {deleteError}

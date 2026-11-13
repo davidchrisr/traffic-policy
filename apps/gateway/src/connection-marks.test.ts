@@ -55,6 +55,7 @@ function policy(hostnames: Record<number, string>): Policy {
       ),
       rule(999, null),
     ],
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 300,

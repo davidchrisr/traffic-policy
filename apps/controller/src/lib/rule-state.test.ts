@@ -64,6 +64,7 @@ describe("Monitor rule state", () => {
         [catchAll],
         instances,
         [],
+        [],
         new Set(),
         service,
         undefined,
@@ -74,6 +75,7 @@ describe("Monitor rule state", () => {
       decideService(
         [catchAll],
         instances,
+        [],
         [],
         new Set([reviewKey(service)]),
         service,
@@ -91,6 +93,7 @@ describe("Monitor rule state", () => {
       decideService(
         [catchAll, allow],
         instances,
+        [],
         [],
         new Set([reviewKey(service)]),
         service,
@@ -112,6 +115,7 @@ describe("Monitor rule state", () => {
       [rule(), named],
       instances,
       [],
+      [],
       new Set(),
       publicService,
       undefined,
@@ -126,6 +130,7 @@ describe("Monitor rule state", () => {
       decideService(
         [rule(), named],
         instances,
+        [],
         [],
         new Set(),
         publicService,
@@ -149,6 +154,7 @@ describe("Monitor rule state", () => {
     const decision = decideService(
       [rule(), allow, block],
       subnet,
+      [],
       [],
       new Set(),
       service,
@@ -176,6 +182,7 @@ describe("Monitor rule state", () => {
       decideService(
         [rule(), allow],
         subnet,
+        [],
         [],
         new Set(),
         service,
@@ -206,6 +213,7 @@ describe("Monitor rule state", () => {
       decideService(
         [rule(), allow],
         addresses,
+        [],
         [],
         new Set(),
         { ...service, peerIp },
@@ -239,6 +247,7 @@ describe("Monitor rule state", () => {
         [rule(), ...halves],
         [{ id: instanceId, name: "Clients", addresses: ["10.22.241.0/24"] }],
         [],
+        [],
         new Set(),
         service,
         undefined,
@@ -261,6 +270,7 @@ describe("Monitor rule state", () => {
     const decision = decideService(
       [rule(), named],
       subnet,
+      [],
       [],
       new Set(),
       { ...service, peerIp: "8.8.8.8" },
@@ -301,12 +311,13 @@ describe("Monitor rule state", () => {
 
     const decide = (
       rules: Rule[],
-      traffic: Parameters<typeof decideService>[4],
+      traffic: Parameters<typeof decideService>[5],
       gateway: typeof endpoint | null = endpoint,
     ) =>
       decideService(
         rules,
         instances,
+        [],
         [],
         new Set(),
         traffic,
@@ -364,6 +375,7 @@ describe("Monitor rule state", () => {
         [rule()],
         [{ id: instanceId, name: "Management", addresses }],
         [],
+        [],
         new Set(),
         { ...toGateway, port: 9443 },
         undefined,
@@ -397,6 +409,7 @@ describe("Monitor rule state", () => {
       decideService(
         [rule()],
         [{ id: instanceId, name: "Resolver", addresses: ["10.22.240.53"] }],
+        [],
         [],
         new Set(),
         { ...toGateway, direction: "incoming", port: 53 },
@@ -436,6 +449,7 @@ describe("Monitor rule state", () => {
         rules,
         instances,
         [],
+        [],
         new Set(),
         { ...service, protocol },
         undefined,
@@ -460,6 +474,7 @@ describe("Monitor rule state", () => {
           [catchAll, named],
           instances,
           [],
+          [],
           new Set(),
           { ...service, peerIp: "8.8.8.8", protocol: 17 },
           undefined,
@@ -483,6 +498,7 @@ describe("Monitor rule state", () => {
     const decision = decideService(
       [catchAll, named],
       instances,
+      [],
       [],
       new Set(),
       { ...service, peerIp: "192.168.1.5" },

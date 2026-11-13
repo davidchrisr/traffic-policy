@@ -5,15 +5,17 @@
     ArrowRight,
     Ban,
     Check,
+    Layers,
     TriangleAlert,
   } from "@lucide/svelte";
-  import type { Instance, Rule } from "@traffic-policy/contracts";
+  import type { Instance, Rule, RuleSet } from "@traffic-policy/contracts";
   import type { RuleDraft } from "@traffic-policy/contracts/dashboard";
   import type { RequestPeer } from "#lib/request-peer.ts";
   import {
     formatPorts,
     parsePorts,
     ruleInputSchema,
+    subjectScope,
   } from "@traffic-policy/contracts";
   import { api, ApiError } from "#lib/client.ts";
   import * as Dialog from "#lib/components/ui/dialog/index.ts";
@@ -41,6 +43,7 @@
     peerAddress = null,
     localNetworks = [],
     instances,
+    ruleSets,
     rules = [],
     revision,
     onSaved,
@@ -57,6 +60,7 @@
     peerAddress?: string | null;
     localNetworks?: string[];
     instances: Instance[];
+    ruleSets: RuleSet[];
     // The current rules, used to warn when another rule overrides this one.
     rules?: Rule[];
     revision: string;
@@ -65,7 +69,7 @@
 
   const fresh = () => ({
     action: "allow",
-    // "any", an instance ID, or "address" for the address field below.
+    // "any", an instance or rule set ID, or "address" for the address field below.
     subject: "any",
     subjectAddress: "",
     direction: "outgoing",
@@ -155,9 +159,11 @@
       next.subject =
         value.subject?.kind === "instance"
           ? value.subject.instanceId
-          : value.subject?.kind === "address"
-            ? "address"
-            : "any";
+          : value.subject?.kind === "ruleSet"
+            ? value.subject.ruleSetId
+            : value.subject?.kind === "address"
+              ? "address"
+              : "any";
       next.subjectAddress =
         value.subject?.kind === "address" ? value.subject.value : "";
       next.direction = value.direction ?? "outgoing";
@@ -209,6 +215,23 @@
   });
 
   type RuleInput = ReturnType<typeof ruleInputSchema.parse>;
+
+  // The rule set chosen as the subject, if any.
+  const subjectSet = $derived(
+    ruleSets.find((ruleSet) => ruleSet.id === fields.subject),
+  );
+
+  // How far a rule in the chosen set reaches.
+  const subjectSetUse = $derived.by(() => {
+    if (!subjectSet) return null;
+
+    if (subjectSet.members.kind === "global") return "Used by every instance.";
+    const count = subjectSet.members.instanceIds.length;
+
+    return count
+      ? `Used by ${count} ${count === 1 ? "instance" : "instances"}.`
+      : "Not attached to an instance.";
+  });
 
   // The rule the fields describe, or why they don't describe one yet.
   function draft():
@@ -270,7 +293,9 @@
             ? { kind: "global" }
             : fields.subject === "address"
               ? { kind: "address", value: fields.subjectAddress }
-              : { kind: "instance", instanceId: fields.subject },
+              : subjectSet
+                ? { kind: "ruleSet", ruleSetId: fields.subject }
+                : { kind: "instance", instanceId: fields.subject },
         action: fields.action,
         direction: fields.direction,
         peer:
@@ -339,7 +364,7 @@
       return null;
     const { value } = candidate.value.subject;
 
-    return policyTree(instances, rules).entries.some(
+    return policyTree(instances, rules, ruleSets).entries.some(
       (entry) => entry.network === value,
     )
       ? null
@@ -378,17 +403,30 @@
       modifiedAt: rule?.modifiedAt ?? "",
     };
 
-    const found = overriddenBy(value, rules, instances);
+    const found = overriddenBy(value, rules, instances, ruleSets);
 
     if (!found) return null;
 
+    const highPriority =
+      found.rule.priority === "high" && value.priority !== "high";
+
     return {
       ...found,
-      highPriority: found.rule.priority === "high" && value.priority !== "high",
+      highPriority,
+      // Rules for the same subject tie there, and Block wins a tie. Between subjects the
+      // winner's subject can rank higher instead, so no reason is given.
+      blockWins:
+        !highPriority &&
+        subjectScope(found.rule.subject) === subjectScope(value.subject),
       // Offered only when High priority would let this rule take effect.
       fixable:
         value.priority === "normal" &&
-        !overriddenBy({ ...value, priority: "high" }, rules, instances),
+        !overriddenBy(
+          { ...value, priority: "high" },
+          rules,
+          instances,
+          ruleSets,
+        ),
     };
   });
 
@@ -487,10 +525,12 @@
               <span class="font-medium"
                 >{override.rule.action === "allow" ? "Allow" : "Block"}</span
               >
-              <RuleLabel rule={override.rule} {instances} /> matches the same traffic
-              and wins, {override.highPriority
-                ? "because it has High priority."
-                : "because Block wins at equal priority."}
+              <RuleLabel rule={override.rule} {instances} {ruleSets} /> matches the
+              same traffic and wins{override.highPriority
+                ? ", because it has High priority."
+                : override.blockWins
+                  ? ", because Block wins at equal priority."
+                  : "."}
             </p>
             {#if override.fixable}<Button
                 variant="outline"
@@ -539,7 +579,7 @@
         </div>
       </div>
       <div class="field-group">
-        <Label for="rule-instance">Instance</Label>
+        <Label for="rule-instance">Applies to</Label>
         <div
           class={["kind-value", fields.subject === "address" && "has-value"]}
         >
@@ -547,7 +587,7 @@
             <Choice
               fullWidth
               id="rule-instance"
-              label="Instance"
+              label="Applies to"
               bind:value={fields.subject}
               options={[
                 { value: "any", label: "Any", builtIn: true },
@@ -556,6 +596,11 @@
                   label: instance.name,
                 })),
                 { value: "address", label: "Address in an instance" },
+                ...ruleSets.map((ruleSet) => ({
+                  value: ruleSet.id,
+                  label: ruleSet.name,
+                  icon: Layers,
+                })),
               ]}
             />
           </div>
@@ -567,6 +612,7 @@
               required
             />{/if}
         </div>
+        {#if subjectSetUse}<p class="muted text-xs">{subjectSetUse}</p>{/if}
       </div>
       <div class="field-group">
         <Label for="rule-peer">Peer</Label>

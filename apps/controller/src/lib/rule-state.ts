@@ -2,6 +2,7 @@ import {
   ScopeTree,
   type Instance,
   type Rule,
+  type RuleSet,
   type ScopeEntry,
 } from "@traffic-policy/contracts";
 import type {
@@ -21,18 +22,22 @@ import {
   type TrafficDecision,
 } from "@traffic-policy/core";
 
-// One scope tree per rule list, shared by every service decided against it.
-const trees = new WeakMap<Rule[], ScopeTree>();
+// One scope tree per rule list and its rule sets, shared by every service decided against it.
+const trees = new WeakMap<Rule[], { ruleSets: RuleSet[]; tree: ScopeTree }>();
 
-export function policyTree(instances: Instance[], rules: Rule[]): ScopeTree {
-  let tree = trees.get(rules);
+export function policyTree(
+  instances: Instance[],
+  rules: Rule[],
+  ruleSets: RuleSet[],
+): ScopeTree {
+  let cached = trees.get(rules);
 
-  if (!tree) {
-    tree = scopeTree({ instances, rules });
-    trees.set(rules, tree);
+  if (cached?.ruleSets !== ruleSets) {
+    cached = { ruleSets, tree: scopeTree({ instances, rules, ruleSets }) };
+    trees.set(rules, cached);
   }
 
-  return tree;
+  return cached.tree;
 }
 
 // One entry for each scope path of each instance that some address has, by family, from its own
@@ -228,6 +233,7 @@ export function reviewKeys(reviews: MonitorSnapshot["reviews"]): Set<string> {
 export function decideService(
   rules: Rule[],
   instances: Instance[],
+  ruleSets: RuleSet[],
   localNetworks: string[],
   reviews: Set<string>,
   service: Service,
@@ -235,7 +241,7 @@ export function decideService(
   now = Date.now(),
   endpoint: GatewayEndpoint | null = null,
 ): ServiceDecision | null {
-  const tree = policyTree(instances, rules);
+  const tree = policyTree(instances, rules, ruleSets);
   const [v4, v6] = pathsOf(tree, service.instanceId);
   const [primary, ...others] = service.peerIp.includes(":") ? v6 : v4;
 
@@ -263,7 +269,7 @@ export function decideService(
 
   const decision = decideTraffic(
     rules,
-    entryContext(primary),
+    entryContext(tree, primary),
     service,
     localNetworks,
     now,
@@ -277,7 +283,7 @@ export function decideService(
   const exceptions = others.flatMap((entry) => {
     const { winner, dns } = decideTraffic(
       rules,
-      entryContext(entry),
+      entryContext(tree, entry),
       service,
       localNetworks,
       now,

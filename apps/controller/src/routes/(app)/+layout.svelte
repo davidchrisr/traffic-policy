@@ -14,6 +14,7 @@
   import {
     Activity,
     ListFilter,
+    Layers,
     Inbox,
     History,
     Settings,
@@ -67,6 +68,7 @@
   const navigation = [
     { href: "/monitor", label: "Monitor", icon: Activity },
     { href: "/rules", label: "Rules", icon: ListFilter },
+    { href: "/rule-sets", label: "Rule sets", icon: Layers },
     { href: "/requests", label: "Requests", icon: Inbox },
     { href: "/history", label: "History", icon: History },
     { href: "/settings", label: "Settings", icon: Settings },

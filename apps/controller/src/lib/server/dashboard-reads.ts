@@ -39,7 +39,7 @@ const EVENT_SCAN_SLICE = 100000;
 
 export type EventScan = "recent" | "full";
 
-type DashboardPolicy = Pick<Policy, "instances" | "rules"> & {
+type DashboardPolicy = Pick<Policy, "instances" | "rules" | "ruleSets"> & {
   settings: Pick<Policy["settings"], "localNetworks">;
 };
 
@@ -283,6 +283,7 @@ export class DashboardReads {
       ),
       instances: policy.instances,
       rules: policy.rules,
+      ruleSets: policy.ruleSets,
       status,
       localNetworks: policy.settings.localNetworks,
     });
@@ -389,7 +390,10 @@ export class DashboardReads {
   }
   history(limit: number, policy: DashboardPolicy, status: DashboardStatus) {
     const names = new Map(
-      policy.instances.map((instance) => [instance.id, instance.name]),
+      [...policy.instances, ...policy.ruleSets].map(({ id, name }) => [
+        id,
+        name,
+      ]),
     );
 
     const rows = this.database
@@ -469,7 +473,7 @@ export class DashboardReads {
           subject,
           details: String(row.details),
           subjectLabel: rule
-            ? describeRule(rule, policy.instances)
+            ? describeRule(rule, policy.instances, policy.ruleSets)
             : (names.get(subject) ?? null),
           subjectRule: rule,
           client: auditClient(String(row.details)),
@@ -479,6 +483,7 @@ export class DashboardReads {
       events: events.map((row) => JSON.parse(String(row.details))),
       instances: policy.instances,
       rules: policy.rules,
+      ruleSets: policy.ruleSets,
       earliestAuditAt: oldest.at === null ? null : String(oldest.at),
       conditions: this.conditions(),
       status,
@@ -1051,6 +1056,7 @@ export class DashboardReads {
       eventSummary,
       reviews,
       rules: policy.rules,
+      ruleSets: policy.ruleSets,
       localNetworks: policy.settings.localNetworks,
       unregistered: this.unregistered(from, to, now, status.gateway),
     });

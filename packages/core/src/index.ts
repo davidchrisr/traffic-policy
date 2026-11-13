@@ -15,6 +15,7 @@ import type {
   Policy,
   PortRange,
   Rule,
+  RuleSet,
   ScopeEntry,
   Subject,
 } from "@traffic-policy/contracts";
@@ -51,7 +52,8 @@ export function peerRank(peer: Peer): number[] {
 // Where a managed address sits among the policy's scopes.
 export interface SubjectContext {
   address: string;
-  // Each scope covering the address, ranked by its covering entry's prefix plus one.
+  // The subject rank of each scope whose rules apply at the address: the scopes covering it and
+  // the rule sets attached to them. See `entryContext`.
   ranks: ReadonlyMap<string, number>;
   // The address's scope path (`ScopeTree.pathKey`), which holds its DNS permissions.
   path: string;
@@ -65,7 +67,9 @@ export function subjectContext(
 ): SubjectContext | null {
   const entry = tree.find(address);
 
-  return entry ? entryContext(entry, ScopeTree.pathKey(entry), address) : null;
+  return entry
+    ? entryContext(tree, entry, ScopeTree.pathKey(entry), address)
+    : null;
 }
 
 // The most specific instance covering each address, for instance lists that may hold networks.
@@ -127,26 +131,42 @@ export function reachablePaths(
 
 // A scope's own place among the scopes: its first address's path, without scopes nested inside it.
 // Callers that already hold the path key or an address on the entry pass them.
+//
+// Subject ranks order rules that are otherwise equally specific. A narrower scope outranks a wider
+// one, and a scope's own rules outrank the rule sets attached to it: a scope ranks three times its
+// prefix length plus one, and a rule set one below the narrowest scope it is attached to. A rule
+// set attached to every instance ranks 1, above the global rules at 0.
 export function entryContext(
+  tree: ScopeTree,
   entry: ScopeEntry,
   path = ScopeTree.pathKey(entry),
   address = integerAddress(entry.family, entry.start),
 ): SubjectContext {
   const ranks = new Map<string, number>();
 
-  for (const value of ScopeTree.path(entry))
-    ranks.set(value.scope, value.prefix + 1);
+  for (const id of tree.universal) ranks.set(id, 1);
+
+  for (const value of ScopeTree.path(entry)) {
+    const rank = 3 * (value.prefix + 1);
+
+    for (const id of value.sets) ranks.set(id, rank - 1);
+    ranks.set(value.scope, rank);
+  }
 
   return { address, ranks, path, instanceId: ScopeTree.instanceOf(entry) };
 }
 
-// Every scope a policy's rules can name, so its tree includes address-rule ranges.
-export function scopeTree(policy: Pick<Policy, "instances" | "rules">) {
+// Every scope a policy's rules can name, so its tree includes address-rule ranges and rule set
+// attachments.
+export function scopeTree(
+  policy: Pick<Policy, "instances" | "rules" | "ruleSets">,
+) {
   return new ScopeTree(
     policy.instances,
     policy.rules.flatMap((rule) =>
       rule.subject.kind === "address" ? [rule.subject.value] : [],
     ),
+    policy.ruleSets,
   );
 }
 
@@ -160,12 +180,12 @@ export function contextRank(
   return scope === null ? 0 : (context.ranks.get(scope) ?? null);
 }
 
-// The scopes on each path of the tree, by `ScopeTree.pathKey`.
+// The scopes whose rules apply on each path of the tree, by `ScopeTree.pathKey`.
 export function pathScopes(tree: ScopeTree): Map<string, Set<string>> {
   return new Map(
     tree.entries.map((entry) => [
       ScopeTree.pathKey(entry),
-      new Set(ScopeTree.path(entry).map((value) => value.scope)),
+      ScopeTree.scopes(tree, entry),
     ]),
   );
 }
@@ -443,6 +463,7 @@ export const directionLabels = {
 export function subjectLabel(
   subject: Subject,
   instances: Pick<Instance, "id" | "name">[] = [],
+  ruleSets: Pick<RuleSet, "id" | "name">[] = [],
 ): string {
   switch (subject.kind) {
     case "global":
@@ -454,12 +475,17 @@ export function subjectLabel(
       );
     case "address":
       return subject.value;
+    case "ruleSet":
+      return (
+        ruleSets.find((value) => value.id === subject.ruleSetId)?.name ??
+        "Rule set"
+      );
   }
 }
 
 // Where a subject sits among the scopes, one line for each of its ranges: the instances and
 // address rules containing it, outermost first, ending with the subject. Null for global
-// subjects, scopes the tree lacks, and scopes nothing contains.
+// subjects, rule sets, scopes the tree lacks, and scopes nothing contains.
 export function subjectPath(
   subject: Subject,
   tree: ScopeTree,
@@ -487,10 +513,14 @@ export function subjectPath(
   return paths.length ? [...new Set(paths)].join("\n") : null;
 }
 
-export function describeRule(rule: Rule, instances: Instance[] = []): string {
+export function describeRule(
+  rule: Rule,
+  instances: Instance[] = [],
+  ruleSets: RuleSet[] = [],
+): string {
   return isCatchAll(rule)
     ? `Catch-all · ${directionLabels[rule.direction]}`
-    : `${subjectLabel(rule.subject, instances)} · ${directionLabels[rule.direction]} · ${ruleScopeLabel(rule)}`;
+    : `${subjectLabel(rule.subject, instances, ruleSets)} · ${directionLabels[rule.direction]} · ${ruleScopeLabel(rule)}`;
 }
 
 export function isCatchAll(
@@ -573,6 +603,16 @@ function peerCovers(outer: Peer, inner: Peer): boolean {
   );
 }
 
+// The entries a scope names; the scopes nested in them inherit its rules. A rule set names the
+// entries of the instances it is attached to, and every root entry when attached to all.
+function scopeEntries(scope: string, tree: ScopeTree): ScopeEntry[] {
+  return tree.universal.includes(scope)
+    ? tree.entries.filter((entry) => !entry.parent)
+    : tree.entries.filter(
+        (entry) => entry.scope === scope || entry.sets.includes(scope),
+      );
+}
+
 // Whether every address `inner` applies to is also one `outer` applies to.
 function subjectCovers(outer: Subject, inner: Subject, tree: ScopeTree) {
   const outerScope = subjectScope(outer),
@@ -580,14 +620,12 @@ function subjectCovers(outer: Subject, inner: Subject, tree: ScopeTree) {
 
   if (outerScope === null || outerScope === innerScope) return true;
 
-  if (innerScope === null) return false;
-  const entries = tree.entries.filter((entry) => entry.scope === innerScope);
+  if (innerScope === null) return tree.universal.includes(outerScope);
+  const entries = scopeEntries(innerScope, tree);
 
   return (
     entries.length > 0 &&
-    entries.every((entry) =>
-      ScopeTree.path(entry).some((value) => value.scope === outerScope),
-    )
+    entries.every((entry) => ScopeTree.scopes(tree, entry).has(outerScope))
   );
 }
 
@@ -641,23 +679,57 @@ export interface Override {
 }
 
 // An active rule with the opposite action that matches everything `rule` matches and outranks
-// it, so `rule` decides nothing. A covering rule can only outrank by High priority or by Block
-// winning an exact tie. With several, the one that lasts longest is reported.
+// it at every address `rule` applies to, so `rule` decides nothing. With several, the one that
+// lasts longest is reported.
 //
-// A covering rule's subject contains `rule`'s, so at every address it ranks the same when both name
-// the same scope and lower otherwise.
+// Subject ranks differ by address: a rule set outranks an instance's own rules where it is also
+// attached to an instance nested inside. They are compared at each scope path `rule` reaches,
+// unless the rules' other fields already decide.
 export function overriddenBy(
   rule: Rule,
   rules: Rule[],
   instances: Instance[],
+  ruleSets: RuleSet[],
   now = Date.now(),
 ): Override | null {
   if (!rule.enabled) return null;
-  const tree = scopeTree({ instances, rules: [...rules, rule] });
+  const tree = scopeTree({ instances, rules: [...rules, rule], ruleSets });
   const scope = subjectScope(rule.subject);
+  let reached: ReadonlyMap<string, number>[] | undefined;
 
-  const subject = (value: Rule) =>
-    subjectScope(value.subject) === scope ? 1 : 0;
+  // The subject ranks at each scope path that has addresses and that `rule` applies to.
+  const contexts = () =>
+    (reached ??= tree.entries.flatMap((entry) => {
+      if (!reachable(entry)) return [];
+      const { ranks } = entryContext(tree, entry);
+
+      return scope === null || ranks.has(scope) ? [ranks] : [];
+    }));
+
+  const favoring = (favored: Rule) => (value: Rule) =>
+    value === favored ? 1 : 0;
+
+  const outranks = (other: Rule) => {
+    if (subjectScope(other.subject) === scope)
+      return compareRules(other, rule, () => 0) < 0;
+
+    // Decided whichever subject ranks higher.
+    if (compareRules(other, rule, favoring(rule)) < 0) return true;
+
+    if (compareRules(other, rule, favoring(other)) >= 0) return false;
+
+    return (
+      contexts().length > 0 &&
+      contexts().every(
+        (ranks) =>
+          compareRules(
+            other,
+            rule,
+            (value) => contextRank(value, { ranks }) ?? 0,
+          ) < 0,
+      )
+    );
+  };
 
   const winner = rules
     .filter(
@@ -666,7 +738,7 @@ export function overriddenBy(
         other.action !== rule.action &&
         ruleState(other, now) === "active" &&
         ruleCovers(other, rule, tree) &&
-        compareRules(other, rule, subject) < 0,
+        outranks(other),
     )
     .sort((left, right) =>
       left.expiresAt === null

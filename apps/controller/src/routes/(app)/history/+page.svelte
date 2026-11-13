@@ -154,17 +154,22 @@
         <Time class="muted numeric w-40 shrink-0 text-xs" value={item.at} />
         <div class="min-w-0">
           <p>{sentence(item.action)}</p>
-          {#if item.subjectRule}<p class="break-words text-xs">
-              {#if model.rules.some((rule) => rule.id === item.subjectRule?.id)}<a
+          {#if item.subjectRule}{@const current = model.rules.find(
+              (rule) => rule.id === item.subjectRule?.id,
+            )}
+            <p class="break-words text-xs">
+              {#if current}<a
                   class="link-subtle"
-                  href={`/rules?rule=${item.subjectRule.id}`}
+                  href={`/${current.subject.kind === "ruleSet" ? "rule-sets" : "rules"}?rule=${current.id}`}
                   ><RuleLabel
                     rule={item.subjectRule}
                     instances={model.instances}
+                    ruleSets={model.ruleSets}
                   /></a
                 >{:else}<RuleLabel
                   rule={item.subjectRule}
                   instances={model.instances}
+                  ruleSets={model.ruleSets}
                 />{/if}
             </p>{:else if (item.subjectLabel ?? item.subject) !== item.actor}<p
               class="break-words text-xs"
@@ -180,7 +185,7 @@
               <summary
                 >{item.changes.length ? "What changed" : "Details"}</summary
               >
-              {#each describeChanges(item.changes, model.instances, item.subjectRule ? [item.subjectRule, ...model.rules] : model.rules) as change, index (index)}<div
+              {#each describeChanges(item.changes, model.instances, model.ruleSets, item.subjectRule ? [item.subjectRule, ...model.rules] : model.rules) as change, index (index)}<div
                   class="audit-change"
                 >
                   <p class="text-foreground">
@@ -188,6 +193,7 @@
                       <RuleLabel
                         rule={change.rule}
                         instances={model.instances}
+                        ruleSets={model.ruleSets}
                       />{/if}
                   </p>
                   {#if change.lines.length}<dl>

@@ -82,6 +82,7 @@ function policy(rules: Rule[]): Policy {
         action: "block",
       }),
     ],
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,

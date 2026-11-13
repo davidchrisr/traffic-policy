@@ -306,6 +306,7 @@
         const decision = decideService(
           model.rules,
           model.instances,
+          model.ruleSets,
           model.localNetworks,
           reviews,
           service,
@@ -334,6 +335,7 @@
           decideService(
             model.rules,
             model.instances,
+            model.ruleSets,
             model.localNetworks,
             reviews,
             service,
@@ -1080,11 +1082,12 @@
                 rule={row.rule}
                 dns={row.dns}
                 instances={own ? null : model.instances}
+                ruleSets={model.ruleSets}
                 path={own
                   ? null
                   : subjectPath(
                       row.rule.subject,
-                      policyTree(model.instances, model.rules),
+                      policyTree(model.instances, model.rules, model.ruleSets),
                       model.instances,
                     )}
               />{#if row.note}<span class="sr-only">{row.note}</span>{/if}</span
@@ -1271,6 +1274,7 @@
   rule={editing}
   {scope}
   instances={model.instances}
+  ruleSets={model.ruleSets}
   rules={model.rules}
   {revision}
   onSaved={async () => {

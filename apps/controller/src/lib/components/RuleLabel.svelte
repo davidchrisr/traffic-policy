@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronsUp, Clock, Globe } from "@lucide/svelte";
-  import type { Instance, Rule } from "@traffic-policy/contracts";
+  import type { Instance, Rule, RuleSet } from "@traffic-policy/contracts";
   import {
     isCatchAll,
     ruleServiceLabel,
@@ -16,6 +16,7 @@
     rule,
     dns = null,
     instances = null,
+    ruleSets = [],
     path = null,
     direction,
   }: {
@@ -23,6 +24,8 @@
     dns?: string | null;
     // Shows the rule's instance where no heading already names it.
     instances?: Instance[] | null;
+    // Names a rule set subject; shown with `instances`.
+    ruleSets?: RuleSet[];
     // Where that instance or address sits among the scopes, shown on hover.
     path?: string | null;
     // A packet's direction in place of the rule's; null shows none.
@@ -47,8 +50,8 @@
   {#if instances !== null}{#if rule.subject.kind === "global"}<BuiltInValue
         kind="any"
       />{:else}<span class="shrink-0" title={path ?? undefined}
-        >{subjectLabel(rule.subject, instances)}{#if path}<span class="sr-only"
-            >{` (${path.replaceAll("\n", "; ")})`}</span
+        >{subjectLabel(rule.subject, instances, ruleSets)}{#if path}<span
+            class="sr-only">{` (${path.replaceAll("\n", "; ")})`}</span
           >{/if}</span
       >{/if}{/if}
   {#if shownDirection}<DirectionIcon direction={shownDirection} />{/if}

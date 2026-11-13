@@ -65,6 +65,7 @@ function policy(limit = 4096): Policy {
       },
       { ...common, id: "00000000-0000-4000-8000-000000000002" },
     ],
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,

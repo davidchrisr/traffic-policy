@@ -119,6 +119,7 @@ function protocol() {
         reason: "",
       },
     ],
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,

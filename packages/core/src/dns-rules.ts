@@ -67,7 +67,7 @@ export class DnsRuleIndex {
     this.tree = scopeTree(policy);
 
     for (const entry of this.tree.entries) {
-      const context = entryContext(entry);
+      const context = entryContext(this.tree, entry);
 
       if (!this.paths.has(context.path)) this.paths.set(context.path, context);
     }

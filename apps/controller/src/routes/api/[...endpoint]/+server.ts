@@ -12,12 +12,15 @@ import {
 import { removeInstance } from "#lib/server/services.ts";
 import { apiError, requestBody } from "#lib/server/api.ts";
 import {
+  createRuleSet,
   deleteRule,
+  deleteRuleSet,
   dismissHostRequest,
   restoreHostRequest,
   expectedRevisionSchema,
   saveInstance,
   saveRule,
+  saveRuleSet,
   saveSettings,
   store,
 } from "#lib/server/services.ts";
@@ -159,6 +162,46 @@ const handle: RequestHandler = async (event) => {
       );
     }
 
+    if (path === "rule-sets" && method === "POST") {
+      const { id, policy } = createRuleSet(
+        event.locals,
+        await requestBody(event.request),
+      );
+
+      return Response.json(
+        { id, revision: policy.revision, pending: true },
+        { status: 202 },
+      );
+    }
+
+    const ruleSetId = path?.match(/^rule-sets\/([^/]+)$/)?.[1];
+
+    if (ruleSetId && method === "PUT") {
+      const policy = saveRuleSet(
+        event.locals,
+        ruleSetId,
+        await requestBody(event.request),
+      );
+
+      return Response.json(
+        { revision: policy.revision, pending: true },
+        { status: 202 },
+      );
+    }
+
+    if (ruleSetId && method === "DELETE") {
+      const policy = deleteRuleSet(
+        event.locals,
+        ruleSetId,
+        await requestBody(event.request),
+      );
+
+      return Response.json(
+        { revision: policy.revision, pending: true },
+        { status: 202 },
+      );
+    }
+
     if (path?.startsWith("instances/") && method === "DELETE") {
       removeInstance(
         event.locals,
@@ -169,12 +212,11 @@ const handle: RequestHandler = async (event) => {
       return Response.json({ accepted: true }, { status: 202 });
     }
 
-    if (path === "instances" && method === "GET")
-      return Response.json({
-        instances: store().desired().instances,
-        rules: store().desired().rules,
-        revision: store().desired().revision,
-      });
+    if (path === "instances" && method === "GET") {
+      const { instances, rules, ruleSets, revision } = store().desired();
+
+      return Response.json({ instances, rules, ruleSets, revision });
+    }
 
     if (path === "instances" && method === "POST") {
       const policy = saveInstance(

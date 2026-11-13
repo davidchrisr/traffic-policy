@@ -34,7 +34,7 @@ function updated(
 }
 
 function objectChanges(
-  subject: "rule" | "instance",
+  subject: "rule" | "instance" | "ruleSet",
   before: (Fields & { id: string })[],
   after: (Fields & { id: string })[],
   ignored?: Set<string>,
@@ -57,12 +57,13 @@ function objectChanges(
   );
 }
 
-// The instances, rules, and settings that differ between two policy revisions.
+// The instances, rule sets, rules, and settings that differ between two policy revisions.
 export function policyChanges(before: Policy, after: Policy): AuditChange[] {
   const settings = updated(before.settings, after.settings);
 
   return [
     ...objectChanges("instance", before.instances, after.instances),
+    ...objectChanges("ruleSet", before.ruleSets, after.ruleSets),
     ...objectChanges("rule", before.rules, after.rules, RULE_BOOKKEEPING),
     ...(settings
       ? [{ subject: "settings" as const, id: null, ...settings }]

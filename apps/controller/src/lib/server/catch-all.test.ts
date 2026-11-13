@@ -39,6 +39,7 @@ const policy = (rules: Rule[]): Policy =>
     generatedAt: created,
     instances: [],
     rules,
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 300,

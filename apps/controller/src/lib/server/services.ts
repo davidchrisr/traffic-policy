@@ -5,6 +5,8 @@ import {
   ipSchema,
   ruleInputSchema,
   ruleSchema,
+  ruleSetFileSchema,
+  ruleSetInputSchema,
   settingsSchema,
   uint64Schema,
   type Instance,
@@ -62,6 +64,21 @@ export const settingsMutationSchema = z
   })
   .strict();
 
+export const ruleSetMutationSchema = z
+  .object({ expectedRevision: uint64Schema, ruleSet: ruleSetInputSchema })
+  .strict();
+
+export const ruleSetCreationSchema = z
+  .object({
+    expectedRevision: uint64Schema,
+    ruleSet: ruleSetInputSchema,
+    // Rules to create in the set, as an exported file lists them.
+    rules: ruleSetFileSchema.shape.rules,
+    // Existing rules that move into the set.
+    move: z.array(z.string().uuid()).max(4096),
+  })
+  .strict();
+
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This authorized service validates raw request input with its mutation schema.
 export function saveRule(requester: Requester, raw: unknown, id?: string) {
   requireAdmin(requester.actor);
@@ -116,6 +133,125 @@ export function deleteRule(requester: Requester, id: string, raw: unknown) {
         throw new ServiceError(404, "rule_not_found", "Rule no longer exists");
       assertNotSettingsCatchAll(existing);
       policy.rules = policy.rules.filter((rule) => rule.id !== id);
+
+      return policy;
+    },
+    requester.client,
+  );
+}
+
+// Creates a rule set from new rules, from existing rules that move into it, or both. Moved rules
+// keep their identity, so History and blocked samples keep naming them.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This authorized service validates raw request input with its mutation schema.
+export function createRuleSet(requester: Requester, raw: unknown) {
+  requireAdmin(requester.actor);
+  const input = ruleSetCreationSchema.parse(raw);
+  const id = randomUUID();
+
+  const policy = store().mutation(
+    input.expectedRevision,
+    "rule-set-created",
+    id,
+    (policy) => {
+      const now = new Date().toISOString();
+      const subject = { kind: "ruleSet" as const, ruleSetId: id };
+      const existing = new Map(policy.rules.map((rule) => [rule.id, rule]));
+      const moved = new Set(input.move);
+
+      for (const identity of moved) {
+        const rule = existing.get(identity);
+
+        if (!rule)
+          throw new ServiceError(
+            404,
+            "rule_not_found",
+            "Rule no longer exists",
+          );
+        assertNotSettingsCatchAll(rule);
+      }
+
+      policy.ruleSets = [...policy.ruleSets, { id, ...input.ruleSet }];
+
+      policy.rules = [
+        ...policy.rules.map((rule) =>
+          moved.has(rule.id) ? { ...rule, subject, modifiedAt: now } : rule,
+        ),
+        ...input.rules.map((rule) =>
+          ruleSchema.parse({
+            ...rule,
+            id: randomUUID(),
+            subject,
+            createdAt: now,
+            modifiedAt: now,
+          }),
+        ),
+      ];
+
+      return policy;
+    },
+    requester.client,
+  );
+
+  return { id, policy };
+}
+
+// Renames a rule set or changes the instances it is attached to.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This authorized service validates raw request input with its mutation schema.
+export function saveRuleSet(requester: Requester, id: string, raw: unknown) {
+  requireAdmin(requester.actor);
+  const input = ruleSetMutationSchema.parse(raw);
+  const identity = z.string().uuid().parse(id);
+
+  return store().mutation(
+    input.expectedRevision,
+    "rule-set-updated",
+    identity,
+    (policy) => {
+      if (!policy.ruleSets.some((value) => value.id === identity))
+        throw new ServiceError(
+          404,
+          "rule_set_not_found",
+          "Rule set no longer exists",
+        );
+
+      policy.ruleSets = policy.ruleSets.map((value) =>
+        value.id === identity ? { id: identity, ...input.ruleSet } : value,
+      );
+
+      return policy;
+    },
+    requester.client,
+  );
+}
+
+// Removes a rule set with its rules.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This authorized service validates raw request input with its mutation schema.
+export function deleteRuleSet(requester: Requester, id: string, raw: unknown) {
+  requireAdmin(requester.actor);
+  const input = expectedRevisionSchema.parse(raw);
+  const identity = z.string().uuid().parse(id);
+
+  return store().mutation(
+    input.expectedRevision,
+    "rule-set-deleted",
+    identity,
+    (policy) => {
+      if (!policy.ruleSets.some((value) => value.id === identity))
+        throw new ServiceError(
+          404,
+          "rule_set_not_found",
+          "Rule set no longer exists",
+        );
+
+      policy.ruleSets = policy.ruleSets.filter(
+        (value) => value.id !== identity,
+      );
+
+      policy.rules = policy.rules.filter(
+        (rule) =>
+          rule.subject.kind !== "ruleSet" ||
+          rule.subject.ruleSetId !== identity,
+      );
 
       return policy;
     },

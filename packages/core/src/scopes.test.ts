@@ -10,6 +10,7 @@ import {
 import { DnsRuleIndex } from "./dns-rules.ts";
 import {
   InstanceOwners,
+  decideTraffic,
   overriddenBy,
   ruleMatches,
   scopeTree,
@@ -32,6 +33,11 @@ import {
 const bridge = "11111111-1111-4111-8111-111111111111";
 
 const runner = "22222222-2222-4222-8222-222222222222";
+
+// Rule sets, named for where each test attaches them.
+const shared = "33333333-3333-4333-8333-333333333333";
+
+const extra = "44444444-4444-4444-8444-444444444444";
 
 const timestamp = "2026-11-03T00:00:00.000Z";
 
@@ -69,7 +75,11 @@ const leafOf = (path: string) =>
   path.slice(path.lastIndexOf("|") + 1, path.lastIndexOf("@"));
 
 // example-network covers a /24; build-runner is a nested /26 inside it.
-function policy(rules: Rule[], instances?: Policy["instances"]): Policy {
+function policy(
+  rules: Rule[],
+  instances?: Policy["instances"],
+  ruleSets: Policy["ruleSets"] = [],
+): Policy {
   return policySchema.parse({
     protocolVersion: 1,
     revision: "7",
@@ -79,6 +89,7 @@ function policy(rules: Rule[], instances?: Policy["instances"]): Policy {
       { id: runner, name: "build-runner", addresses: ["10.10.0.64/26"] },
     ],
     rules: [...rules, catchAll()],
+    ruleSets,
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,
@@ -172,9 +183,9 @@ describe("subnet instances and address rules", () => {
       path: `4|${bridge}@24|${runner}@26|10.10.0.70@32`,
       instanceId: runner,
       ranks: new Map([
-        [bridge, 25],
-        [runner, 27],
-        ["10.10.0.70", 33],
+        [bridge, 75],
+        [runner, 81],
+        ["10.10.0.70", 99],
       ]),
     });
 
@@ -226,7 +237,9 @@ describe("subnet instances and address rules", () => {
 
     const instances = value.instances;
 
-    expect(overriddenBy(childAllow, value.rules, instances, now)).toBeNull();
+    expect(
+      overriddenBy(childAllow, value.rules, instances, [], now),
+    ).toBeNull();
     expect(
       overriddenBy(
         rule({
@@ -236,6 +249,7 @@ describe("subnet instances and address rules", () => {
         }),
         [{ ...parentPortBlock, priority: "high" }],
         instances,
+        [],
         now,
       )?.rule.id,
     ).toBe(parentPortBlock.id);
@@ -744,5 +758,330 @@ describe("subnet instances and address rules", () => {
     expect(
       new DnsRuleIndex(moved).match(lease!).map((binding) => binding.path),
     ).toEqual([`4|${bridge}@24`]);
+  });
+});
+
+describe("rule sets", () => {
+  const https = { protocol: 6, ports: [{ start: 443, end: 443 }] };
+
+  const inSet = (ruleSetId: string, partial: Partial<Rule> = {}) =>
+    rule({ subject: { kind: "ruleSet", ruleSetId }, ...https, ...partial });
+
+  const own = (instanceId: string, partial: Partial<Rule> = {}) =>
+    rule({ subject: { kind: "instance", instanceId }, ...https, ...partial });
+
+  const attached = (id: string, ...instanceIds: string[]) => ({
+    id,
+    name: id === shared ? "Shared" : "Extra",
+    members: { kind: "instances" as const, instanceIds },
+  });
+
+  const universal = (id: string) => ({
+    id,
+    name: "Everywhere",
+    members: { kind: "global" as const },
+  });
+
+  const web = {
+    direction: "outgoing" as const,
+    peerIp: "93.184.216.34",
+    protocol: 6,
+    port: 443,
+  };
+
+  // The rule that decides HTTPS from an address.
+  const winner = (value: Policy, address: string) =>
+    decideTraffic(
+      value.rules,
+      subjectContext(scopeTree(value), address)!,
+      web,
+      [],
+      now,
+    ).winner?.id;
+
+  it("ranks an instance's own rules above its rule sets, and those above every shallower scope", () => {
+    const any = rule(https);
+    const everywhere = inSet(extra, { action: "block" });
+    const parent = own(bridge);
+    const fromSet = inSet(shared, { action: "block" });
+    const child = own(runner);
+
+    const value = policy([any, everywhere, parent, fromSet, child], undefined, [
+      attached(shared, runner),
+      universal(extra),
+    ]);
+
+    const { nodes } = policyNodes(scopeTree(value));
+
+    const rules = (scope: string) =>
+      nodeRules(
+        value,
+        nodes.find((node) => leafOf(node.path) === scope)!,
+        "outgoing",
+      )
+        .slice(0, -1)
+        .map((value) => value.id);
+
+    expect(rules(runner)).toEqual(
+      [child, fromSet, parent, everywhere, any].map((value) => value.id),
+    );
+    // The set is attached to the nested instance only, so the containing one never sees it.
+    expect(rules(bridge)).toEqual(
+      [parent, everywhere, any].map((value) => value.id),
+    );
+    expect(winner(value, "10.10.0.70")).toBe(child.id);
+    expect(winner(value, "10.10.0.10")).toBe(parent.id);
+
+    const without = (...removed: Rule[]) =>
+      policy(
+        [any, everywhere, parent, fromSet, child].filter(
+          (value) => !removed.includes(value),
+        ),
+        undefined,
+        value.ruleSets,
+      );
+
+    expect(winner(without(child), "10.10.0.70")).toBe(fromSet.id);
+    expect(winner(without(child, fromSet, parent), "10.10.0.70")).toBe(
+      everywhere.id,
+    );
+  });
+
+  it("ties an instance's rule sets, so its rule moved into one stops outranking the other's", () => {
+    // The instance's rule before and after it is saved as a set attached to that instance.
+    const decided = (kept: Rule, fromSet: Rule) => {
+      const moved = {
+        ...kept,
+        subject: { kind: "ruleSet" as const, ruleSetId: extra },
+      };
+
+      return [
+        winner(
+          policy([fromSet, kept], undefined, [attached(shared, runner)]),
+          "10.10.0.70",
+        ),
+        winner(
+          policy([fromSet, moved], undefined, [
+            attached(shared, runner),
+            attached(extra, runner),
+          ]),
+          "10.10.0.70",
+        ),
+      ];
+    };
+
+    const allow = own(runner);
+    const block = inSet(shared, { action: "block" });
+
+    // Block wins the tie.
+    expect(decided(allow, block)).toEqual([allow.id, block.id]);
+
+    const both = own(runner, { action: "block", direction: "both" });
+    const outgoing = inSet(shared);
+
+    // One direction wins the tie over both.
+    expect(decided(both, outgoing)).toEqual([both.id, outgoing.id]);
+  });
+
+  it("applies a set where it is attached, to nested instances too, and nowhere when unattached", () => {
+    const fromSet = inSet(shared, { action: "block" });
+    const rules = [fromSet, rule(https)];
+    const at = (value: Policy, address: string) => winner(value, address);
+
+    const onParent = policy(rules, undefined, [attached(shared, bridge)]);
+
+    expect(at(onParent, "10.10.0.10")).toBe(fromSet.id);
+    expect(at(onParent, "10.10.0.70")).toBe(fromSet.id);
+
+    const onChild = policy(rules, undefined, [attached(shared, runner)]);
+
+    expect(at(onChild, "10.10.0.10")).toBe(rules[1]!.id);
+    expect(at(onChild, "10.10.0.70")).toBe(fromSet.id);
+
+    const unattached = policy(rules, undefined, [attached(shared)]);
+
+    expect(at(unattached, "10.10.0.70")).toBe(rules[1]!.id);
+    expect(
+      policyNodes(scopeTree(unattached)).nodes.flatMap((node) =>
+        nodeRules(unattached, node, "outgoing"),
+      ),
+    ).not.toContain(fromSet);
+  });
+
+  it("keeps scope paths and connection marks the same whatever is attached", () => {
+    const rules = [
+      inSet(shared),
+      own(runner, { peer: { kind: "hostname", value: "example.com" } }),
+    ];
+
+    const before = policy(rules, undefined, [attached(shared)]);
+    const after = policy(rules, undefined, [attached(shared, bridge, runner)]);
+
+    const paths = (value: Policy) =>
+      policyNodes(scopeTree(value)).nodes.map((node) => node.path);
+
+    expect(paths(after)).toEqual(paths(before));
+    expect(connectionMarkScopes(before)).not.toEqual([]);
+    expect(connectionMarkScopes(after)).toEqual(connectionMarkScopes(before));
+  });
+
+  it("reports a rule as overridden only when the other rule outranks it at every address", () => {
+    const fromSet = inSet(shared, { action: "block" });
+    const parent = own(bridge);
+    const child = own(runner);
+    const { instances } = policy([]);
+
+    const overrides = (
+      value: Rule,
+      rules: Rule[],
+      ruleSets: Policy["ruleSets"],
+    ) => overriddenBy(value, rules, instances, ruleSets, now)?.rule.id ?? null;
+
+    // The instance's own rule wins over its set's.
+    const onChild = [attached(shared, runner)];
+
+    expect(overrides(fromSet, [fromSet, child], onChild)).toBe(child.id);
+    expect(overrides(child, [fromSet, child], onChild)).toBeNull();
+
+    // Attached to both, the set wins inside the nested instance and loses outside it.
+    const onBoth = [attached(shared, bridge, runner)];
+
+    expect(overrides(fromSet, [fromSet, parent], onBoth)).toBeNull();
+    expect(overrides(parent, [fromSet, parent], onBoth)).toBeNull();
+
+    const onParent = [attached(shared, bridge)];
+
+    expect(overrides(fromSet, [fromSet, parent], onParent)).toBe(parent.id);
+
+    // A set attached to every instance outranks Any rules and loses to an instance covering all
+    // of its addresses.
+    const any = rule(https);
+    const everywhere = [universal(shared)];
+
+    expect(overrides(any, [fromSet, any], everywhere)).toBe(fromSet.id);
+    expect(overrides(fromSet, [fromSet, parent], everywhere)).toBe(parent.id);
+    expect(overrides(fromSet, [fromSet, child], everywhere)).toBeNull();
+    // Unattached, the set's rules apply nowhere and nothing overrides them.
+    expect(
+      overrides(fromSet, [fromSet, parent], [attached(shared)]),
+    ).toBeNull();
+  });
+
+  it("decides DNS and holds permissions by a set's rules for the instances it is attached to", () => {
+    const allow = inSet(shared, {
+      peer: { kind: "hostname", value: "api.example.com" },
+    });
+
+    const value = policy([allow], undefined, [attached(shared, runner)]);
+    const index = new DnsRuleIndex(value);
+
+    const decide = (index: DnsRuleIndex, address: string) =>
+      index.decide(index.context(address)!, "api.example.com", now);
+
+    expect(decide(index, "10.10.0.70")).toMatchObject({
+      allowed: true,
+      ruleId: allow.id,
+    });
+    expect(decide(index, "10.10.0.10").allowed).toBe(false);
+
+    const permissions = [
+      ...iteratePermissionsForLeases(
+        value,
+        addressLeases(
+          value,
+          {
+            clientIp: "10.10.0.70",
+            question: "api.example.com",
+            responseAt: timestamp,
+            answers: [
+              {
+                owner: "api.example.com",
+                type: "A",
+                value: "93.184.216.34",
+                ttl: 60,
+              },
+            ],
+          },
+          index,
+        ),
+        now,
+        index,
+      ),
+    ];
+
+    expect(
+      permissions.map((permission) => [permission.ruleId, permission.path]),
+    ).toEqual([[allow.id, `4|${bridge}@24|${runner}@26`]]);
+
+    // The instance's own Block for the name outranks the set's Allow.
+    const block = own(runner, {
+      action: "block",
+      peer: { kind: "hostname", value: "api.example.com" },
+    });
+
+    const blocked = policy([allow, block], undefined, value.ruleSets);
+
+    expect(decide(new DnsRuleIndex(blocked), "10.10.0.70")).toMatchObject({
+      allowed: false,
+      ruleId: block.id,
+    });
+  });
+
+  it("validates set identities, attachments, and the rules that name a set", () => {
+    const parse = (rules: Rule[], ruleSets: Policy["ruleSets"]) =>
+      policySchema.safeParse({
+        ...policy([]),
+        rules: [...rules, catchAll()],
+        ruleSets,
+      });
+
+    const problem = (rules: Rule[], ruleSets: Policy["ruleSets"]) =>
+      parse(rules, ruleSets).error?.issues[0]?.message;
+
+    expect(parse([inSet(shared)], [attached(shared, runner)]).success).toBe(
+      true,
+    );
+    expect(problem([inSet(shared)], [])).toBe(
+      "Rule references an unknown rule set",
+    );
+    expect(problem([], [attached(shared), attached(shared)])).toBe(
+      "Duplicate rule set identity",
+    );
+    expect(problem([], [attached(bridge)])).toBe(
+      "A rule set and an instance share an identity",
+    );
+    expect(problem([], [attached(shared, runner, runner)])).toBe(
+      "A rule set lists an instance twice",
+    );
+    expect(problem([], [attached(shared, extra)])).toBe(
+      "Rule set references an unknown instance",
+    );
+  });
+
+  it("counts a set's rules once for each scope path they reach", () => {
+    const instances = Array.from({ length: 200 }, (_, index) => ({
+      id: `55555555-5555-4555-8555-${String(index).padStart(12, "0")}`,
+      name: `client-${index}`,
+      addresses: [`10.30.${index}.0/24`],
+    }));
+
+    const rules = Array.from({ length: 251 }, () => inSet(shared));
+
+    const parse = (ruleSets: Policy["ruleSets"]) =>
+      policySchema.safeParse({
+        ...policy([], instances),
+        rules: [...rules, catchAll()],
+        ruleSets,
+      });
+
+    const ids = instances.map((instance) => instance.id);
+
+    // 251 rules and the catch-all on 198 paths stay within the budget; on 200 they exceed it.
+    expect(parse([attached(shared, ...ids.slice(0, 198))]).success).toBe(true);
+    expect(parse([attached(shared, ...ids)]).error?.issues[0]?.message).toBe(
+      "Policy exceeds its compilation budget",
+    );
+    expect(parse([universal(shared)]).success).toBe(false);
+    expect(parse([attached(shared)]).success).toBe(true);
   });
 });

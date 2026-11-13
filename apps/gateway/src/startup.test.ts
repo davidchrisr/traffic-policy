@@ -94,6 +94,7 @@ function policy() {
         reason: "",
       },
     ],
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,

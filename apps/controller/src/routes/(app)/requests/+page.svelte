@@ -182,7 +182,7 @@
 
     const context = request.clients[0]
       ? subjectContext(
-          policyTree(model.instances, model.rules),
+          policyTree(model.instances, model.rules, model.ruleSets),
           request.clients[0].address,
         )
       : null;
@@ -970,6 +970,7 @@
   {peerAddress}
   localNetworks={model.localNetworks}
   instances={model.instances}
+  ruleSets={model.ruleSets}
   rules={model.rules}
   revision={model.status.desiredRevision}
   onSaved={() => refresh()}

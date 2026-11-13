@@ -154,6 +154,7 @@ function policy(): Policy {
       },
       block,
     ],
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 0,

@@ -8,6 +8,7 @@ import {
   ipSchema,
   ruleSchema,
   ruleInputSchema,
+  ruleSetSchema,
   nameSchema,
   dnsQuestionNameSchema,
   settingsSchema,
@@ -223,6 +224,7 @@ export const monitorSnapshotSchema = z
       .nullable(),
     reviews: z.array(monitorReviewSchema),
     rules: z.array(ruleSchema),
+    ruleSets: z.array(ruleSetSchema),
     // Settings localNetworks, which hostname and domain rules refuse as DNS answers.
     localNetworks: z.array(cidrSchema),
     // Drops of connections with no instance on either end in the period: packet counts by the side
@@ -370,6 +372,7 @@ export const requestsSnapshotSchema = z
     requests: z.array(reviewRequestSchema),
     // Current rules, so the rule editor can warn when another rule overrides a new one.
     rules: z.array(ruleSchema),
+    ruleSets: z.array(ruleSetSchema),
     retention: z
       .object({
         pending: z.number().int().min(0),
@@ -388,12 +391,12 @@ export const requestsSnapshotSchema = z
   })
   .strict();
 
-// What one admin change did to a rule, an instance, or the settings. A created object has only
-// after values and a deleted one only before values, both complete. An update keeps the fields
-// that changed, and every service field when any of them changed.
+// What one admin change did to a rule, an instance, a rule set, or the settings. A created object
+// has only after values and a deleted one only before values, both complete. An update keeps the
+// fields that changed, and every service field when any of them changed.
 export const auditChangeSchema = z
   .object({
-    subject: z.enum(["rule", "instance", "settings"]),
+    subject: z.enum(["rule", "instance", "ruleSet", "settings"]),
     id: z.string().uuid().nullable(),
     before: z.record(z.string(), z.json()).nullable(),
     after: z.record(z.string(), z.json()).nullable(),
@@ -432,6 +435,7 @@ export const historySnapshotSchema = z
     events: z.array(eventSchema),
     instances: z.array(instanceSchema),
     rules: z.array(ruleSchema),
+    ruleSets: z.array(ruleSetSchema),
     earliestAuditAt: instantSchema.nullable(),
     conditions: z.array(conditionSchema),
     status: dashboardStatusSchema,
@@ -467,17 +471,28 @@ export const rulesSnapshotSchema = z
           .nullable(),
       }),
     ),
+    ruleSets: z.array(ruleSetSchema),
     status: dashboardStatusSchema,
   })
   .strict();
 
 export type RulesSnapshot = z.infer<typeof rulesSnapshotSchema>;
 
+// The response to creating a rule set: its assigned identity and the pending revision.
+export const ruleSetCreatedSchema = z
+  .object({
+    id: z.string().uuid(),
+    revision: counterSchema,
+    pending: z.literal(true),
+  })
+  .strict();
+
 export const instancesSnapshotSchema = z
   .object({
     revision: counterSchema,
     instances: z.array(instanceSchema),
     rules: z.array(ruleSchema),
+    ruleSets: z.array(ruleSetSchema),
   })
   .strict();
 

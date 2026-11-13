@@ -134,6 +134,7 @@ function policy(rules: Rule[]): Policy {
     generatedAt: timestamp,
     instances: structuredClone(instances),
     rules: [...rules, rule()],
+    ruleSets: [],
     settings: {
       dnsReleaseMode: "require-allow",
       dnsGraceSeconds: 7200,
@@ -397,11 +398,11 @@ describe("overridden rules", () => {
     const block = target();
     const allow = target({ action: "allow", expiresAt: later });
 
-    expect(overriddenBy(allow, [block, allow], instances, now)).toEqual({
+    expect(overriddenBy(allow, [block, allow], instances, [], now)).toEqual({
       rule: block,
       until: null,
     });
-    expect(overriddenBy(block, [block, allow], instances, now)).toBeNull();
+    expect(overriddenBy(block, [block, allow], instances, [], now)).toBeNull();
   });
 
   it("ignores rules that only partly cover or are outranked by specificity", () => {
@@ -412,11 +413,11 @@ describe("overridden rules", () => {
       target({ peer: { kind: "cidr", value: "10.22.242.0/24" } }),
       rule({ peer: { kind: "cidr", value: "10.22.242.0/24" } }),
     ])
-      expect(overriddenBy(allow, [other], instances, now)).toBeNull();
+      expect(overriddenBy(allow, [other], instances, [], now)).toBeNull();
 
     // A TCP Block outranks a TCP/UDP Allow but leaves its UDP traffic alone.
     expect(
-      overriddenBy(allow, [target({ protocol: 6 })], instances, now),
+      overriddenBy(allow, [target({ protocol: 6 })], instances, [], now),
     ).toBeNull();
 
     // An internal-only High Block leaves the same name's public answers to the Allow.
@@ -434,6 +435,7 @@ describe("overridden rules", () => {
           }),
         ],
         instances,
+        [],
         now,
       ),
     ).toBeNull();
@@ -442,6 +444,7 @@ describe("overridden rules", () => {
         publicAllow,
         [target({ peer: named, priority: "high" })],
         instances,
+        [],
         now,
       )?.rule.priority,
     ).toBe("high");
@@ -468,11 +471,18 @@ describe("overridden rules", () => {
           ]),
         ],
         instances,
+        [],
         now,
       ),
     ).not.toBeNull();
     expect(
-      overriddenBy(allow, [block([{ start: 1, end: 1000 }])], instances, now),
+      overriddenBy(
+        allow,
+        [block([{ start: 1, end: 1000 }])],
+        instances,
+        [],
+        now,
+      ),
     ).toBeNull();
   });
 
@@ -480,7 +490,7 @@ describe("overridden rules", () => {
     const broad = rule({ priority: "high", expiresAt: later });
     const allow = target({ action: "allow" });
 
-    expect(overriddenBy(allow, [broad], instances, now)).toEqual({
+    expect(overriddenBy(allow, [broad], instances, [], now)).toEqual({
       rule: broad,
       until: later,
     });
@@ -489,6 +499,7 @@ describe("overridden rules", () => {
         target({ action: "allow", expiresAt: later }),
         [broad],
         instances,
+        [],
         now,
       )?.until,
     ).toBeNull();
@@ -497,6 +508,7 @@ describe("overridden rules", () => {
         allow,
         [broad, rule({ priority: "high", expiresAt: latest })],
         instances,
+        [],
         now,
       )?.until,
     ).toBe(latest);
@@ -505,6 +517,7 @@ describe("overridden rules", () => {
         allow,
         [rule({ priority: "high", enabled: false })],
         instances,
+        [],
         now,
       ),
     ).toBeNull();
@@ -513,6 +526,7 @@ describe("overridden rules", () => {
         target({ action: "allow", enabled: false }),
         [broad],
         instances,
+        [],
         now,
       ),
     ).toBeNull();
@@ -536,6 +550,7 @@ describe("overridden rules", () => {
           }),
         ],
         instances,
+        [],
         now,
       ),
     ).not.toBeNull();

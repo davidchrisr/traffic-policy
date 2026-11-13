@@ -892,6 +892,7 @@ describe("controller contracts and persistence", () => {
           revision: policy.revision,
           instances: policy.instances,
           rules: policy.rules,
+          ruleSets: policy.ruleSets,
         }).rules,
       ).toEqual(policy.rules);
       expect(() =>
