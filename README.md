@@ -13,37 +13,29 @@ blocked requests.
 
 ## What it does
 
-- Apply global, instance, and address rules for addresses, domains, protocols,
-  and ports, with priorities and expiration times. Instances can be hosts or
-  whole subnets; nested ones inherit their parents' rules.
+- Apply rules to every instance, one instance, or an address range, matching
+  addresses, domains, protocols, and ports, with priorities and expiration
+  times. Instances can be hosts or whole subnets; nested ones inherit their
+  parents' rules.
 - Keep shared rules in rule sets and attach each set to the instances that need
-  it. Editing a set changes every instance it is attached to, and an instance's
-  own rules win over its sets. Export sets to files and import them on other
-  controllers.
-- Drop traffic from hosts no instance covers and ask to register the ones seen
-  on any interface other than upstream ones.
-- Choose whether DNS answers require prior connection approval. Connection rules
-  apply in either mode.
+  it.
+- Block hosts on client networks until they are registered, and list them as
+  registration requests.
+- Choose whether DNS answers require prior connection approval.
 - Monitor sent and received traffic, group peers by domain, and inspect
   connection evidence.
-- Review blocked requests and policy changes in the dashboard.
-- Collect observations into a bounded durable delivery buffer, with visible
-  reporting of capture gaps, rejected observations, and retention limits.
+- Review the history of policy changes.
 
 The application runs on a routed Linux gateway. It manages network instances,
-not per-process permissions on a desktop. Network routing and client DNS
-configuration are provisioned separately.
+not per-process permissions on a desktop.
 
 ## Architecture
 
 The controller owns the dashboard, authentication, desired policy, and history.
-An unprivileged gateway handles DNS authorization and observation delivery. A
-restricted privileged enforcement service owns nftables updates. Suricata
-supplies passive metadata; observed names do not independently authorize
-traffic.
-
-Machine APIs use mutual TLS. Learned DNS permissions are held in memory and
-renewed by subsequent lookups after an enforcement service restart.
+An unprivileged gateway service authorizes DNS answers and delivers observations
+to the controller. A separate privileged enforcement service, limited to
+`CAP_NET_ADMIN`, applies nftables updates. Suricata supplies passive metadata.
+Machine APIs use mutual TLS.
 
 Read the [architecture](docs/ARCHITECTURE.md) for system and policy behavior,
 the [API contract](API_CONTRACT.md) for wire formats, and the
@@ -53,13 +45,12 @@ the [API contract](API_CONTRACT.md) for wire formats, and the
 
 Follow the [setup guide](docs/SETUP.md) for configuration, machine identities,
 Admin initialization, and Linux services. The
-[example configurations](examples/) use documentation addresses and contain no
-credentials. Set the Admin password during initial setup.
+[example configurations](examples/) are templates.
 
 The service definitions target Linux x64 with glibc and systemd. Deployment
 requires nftables, conntrack, Suricata, and a configured routing topology.
-Network commissioning is manual; the project does not configure a router
-automatically.
+Network commissioning is manual; the project does not configure routing or
+client DNS.
 
 ## Development
 
@@ -68,18 +59,18 @@ gateway testing.
 
 ## Repository layout
 
-| Path                  | Purpose                                                             |
-| --------------------- | ------------------------------------------------------------------- |
-| `packages/contracts/` | Validated shared data and wire contracts                            |
-| `packages/core/`      | Rule precedence, DNS permissions, and native compilation            |
-| `apps/gateway/`       | Enforcement service, resolver gate, collection and durable delivery |
-| `apps/controller/`    | Dashboard, services, SQLite, and gateway link                       |
-| `tools/`              | Build, runtime, and Admin setup tooling                             |
-| `packaging/linux/`    | Linux service units, sysctls and pinned runtime metadata            |
-| `examples/`           | Deployment configuration templates                                  |
-| `dev/docker/`         | Development stack for end-to-end checks                             |
-| `DESIGN.md`           | Visual design and component recipes                                 |
-| `docs/`               | Architecture, setup, and product behavior                           |
+| Path                  | Purpose                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `packages/contracts/` | Validated shared data and wire contracts                             |
+| `packages/core/`      | Rule precedence, DNS permissions, and native compilation             |
+| `apps/gateway/`       | Enforcement service, resolver gate, collection with durable delivery |
+| `apps/controller/`    | Dashboard, services, SQLite, and gateway link                        |
+| `tools/`              | Build, runtime, and Admin setup tooling                              |
+| `packaging/linux/`    | Linux service units, sysctls, and pinned runtime metadata            |
+| `examples/`           | Deployment configuration templates                                   |
+| `dev/docker/`         | Development stack for end-to-end checks                              |
+| `DESIGN.md`           | Visual design and component recipes                                  |
+| `docs/`               | Architecture, setup, and product behavior                            |
 
 ## Security
 
@@ -89,5 +80,5 @@ Report vulnerabilities privately as described in the
 ## License
 
 Project-authored code is available under the [MIT license](LICENSE).
-[Third-party notices](docs/THIRD_PARTY.md) identify copied source, datasets and
+[Third-party notices](docs/THIRD_PARTY.md) identify copied source, datasets, and
 fonts with their own licenses.
